@@ -1,16 +1,22 @@
 /**
  * Script lấy thông tin kênh YouTube từ link trong input.txt
  * Chỉ xử lý channel/playlist, không xử lý video
+ * Xuất kết quả ra file Excel (.xlsx) với dropdown cột Trạng thái
  */
 
 import youtubedl from 'youtube-dl-exec';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import ExcelJS from 'exceljs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_OUTPUT_DIR = path.join(__dirname, 'channels');
 const INPUT_FILE = path.join(__dirname, 'input.txt');
-const OUTPUT_FILE = path.join(__dirname, 'output.json');
+const OUTPUT_EXCEL = path.join(DEFAULT_OUTPUT_DIR, 'output.xlsx');
+
+/** Options cho cột Trạng thái (dropdown) */
+const TRANG_THAI_OPTIONS = ['', 'Đã tạo video', 'Đã đăng video'];
 
 /**
  * Phát hiện loại URL: 'video' | 'channel' | 'playlist'
@@ -38,10 +44,10 @@ function channelToUploadsPlaylistId(channelId) {
 }
 
 /**
- * Lấy thông tin kênh/playlist
+ * Lấy thông tin kênh (và video từ kênh)
  */
 async function getChannelInfo(url) {
-  // Bước 1: Lấy metadata kênh (name, description, tags)
+  // Bước 1: Lấy metadata kênh
   const rawMeta = await youtubedl(url, {
     dumpSingleJson: true,
     flatPlaylist: true,
@@ -54,13 +60,13 @@ async function getChannelInfo(url) {
   let videoLinks = [];
   let entries = [];
 
-  // Bước 2: Nếu là kênh, lấy danh sách video từ uploads playlist
+  // Bước 2: Nếu là kênh, lấy danh sách video từ uploads
   if (channelId) {
     const playlistId = channelToUploadsPlaylistId(channelId);
     if (playlistId) {
-      const playlistUrl = `https://www.youtube.com/playlist?list=${playlistId}`;
+      const plUrl = `https://www.youtube.com/playlist?list=${playlistId}`;
       try {
-        const rawPlaylist = await youtubedl(playlistUrl, {
+        const rawPlaylist = await youtubedl(plUrl, {
           dumpSingleJson: true,
           flatPlaylist: true,
           noCheckCertificates: true,
@@ -68,16 +74,14 @@ async function getChannelInfo(url) {
           addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
         });
         entries = rawPlaylist.entries || [];
-        videoLinks = entries
-          .filter(e => e.id && e.id.length === 11) // Video ID có 11 ký tự
-          .map(e => e.url || `https://www.youtube.com/watch?v=${e.id}`);
+        videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => e.url || `https://www.youtube.com/watch?v=${e.id}`);
       } catch (err) {
         console.warn('Không lấy được danh sách video:', err.message);
       }
     }
   }
 
-  // Nếu là playlist trực tiếp (không phải kênh), dùng entries từ rawMeta
+  // Nếu là playlist URL trực tiếp, dùng entries từ rawMeta
   if (entries.length === 0 && rawMeta.entries) {
     entries = rawMeta.entries;
     videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => e.url || `https://www.youtube.com/watch?v=${e.id}`);
@@ -139,9 +143,42 @@ async function main() {
 
   try {
     const result = await getChannelInfo(url);
-    const output = JSON.stringify(result, null, 2);
-    fs.writeFileSync(OUTPUT_FILE, output, 'utf-8');
-    console.log(`\nĐã lưu kết quả vào output.json`);
+
+    // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
+    const headers = ['EMAIL', 'TÊN KÊNH', 'VIDEO', 'TRẠNG THÁI'];
+    const videoLinks = [...(result.video_links || [])].reverse();
+
+    const channelName = result.name || '';
+    const rows =
+      videoLinks.length > 0
+        ? videoLinks.map((videoUrl, i) => ['', i === 0 ? channelName : '', videoUrl, ''])
+        : [['', channelName, '(Không có video)', '']];
+
+    if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
+      fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Kênh YouTube', { views: [{ state: 'frozen', ySplit: 1 }] });
+    sheet.addRow(headers);
+    rows.forEach(row => sheet.addRow(row));
+
+    // Độ rộng cột: email | Tên kênh | Video (dài nhất) | Trạng thái
+    sheet.columns = [{ width: 25 }, { width: 28 }, { width: 65 }, { width: 22 }];
+
+    // Thêm dropdown cho cột Trạng thái (cột D): "" | "Đã tạo video" | "Đã đăng video"
+    const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      sheet.getCell(`D${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [listFormula],
+      };
+    }
+
+    await workbook.xlsx.writeFile(OUTPUT_EXCEL);
+
+    console.log(`\nĐã lưu kết quả vào ${path.basename(OUTPUT_EXCEL)} (${rows.length} video)`);
   } catch (err) {
     console.error('Lỗi:', err.message);
     if (err.stderr) console.error('Chi tiết:', err.stderr);

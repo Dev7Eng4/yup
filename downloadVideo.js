@@ -302,6 +302,42 @@ async function downloadAudio(url, options = {}) {
 }
 
 /**
+ * Tải 1 video: video + transcript + audio (dùng cho xử lý batch)
+ * @param {string} url - Link YouTube
+ * @returns {Promise<{title: string} | null>} - Thông tin video nếu thành công, null nếu lỗi
+ */
+async function downloadSingleVideo(url) {
+  if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
+    fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
+  } else {
+    const entries = fs.readdirSync(DEFAULT_OUTPUT_DIR, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(DEFAULT_OUTPUT_DIR, entry.name);
+      if (entry.isFile()) {
+        fs.unlinkSync(fullPath);
+      } else {
+        fs.rmSync(fullPath, { recursive: true });
+      }
+    }
+  }
+
+  try {
+    const result = await getVideoInfo(url);
+    await downloadVideo(url, { outputDir: DEFAULT_OUTPUT_DIR });
+    try {
+      await downloadTranscript(url, { outputDir: DEFAULT_OUTPUT_DIR, videoTitle: result.title });
+    } catch (err) {
+      console.warn('Không tải được transcript:', err.message);
+    }
+    await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
+    return result;
+  } catch (err) {
+    console.error(`Lỗi tải ${url}:`, err.message);
+    return null;
+  }
+}
+
+/**
  * Main: đọc input.txt, lấy thông tin video + tải
  */
 async function main() {
@@ -362,4 +398,4 @@ async function main() {
 }
 
 export default downloadVideo;
-export { main, getVideoInfo, downloadThumbnail, downloadTranscript, downloadAudio };
+export { main, getVideoInfo, downloadThumbnail, downloadTranscript, downloadAudio, downloadSingleVideo };

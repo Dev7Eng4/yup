@@ -51,6 +51,18 @@ async function main() {
   }
 
   if (action === 'makeVideoFromAudio') {
+    const { mode } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'mode',
+        message: 'Chọn chế độ:',
+        choices: [
+          { name: 'Xử lý 1', value: 'single' },
+          { name: 'Xử lý nhiều', value: 'batch' },
+        ],
+      },
+    ]);
+
     const dirs = fs.readdirSync(BACKGROUNDS_DIR).filter(f => {
       const fullPath = path.join(BACKGROUNDS_DIR, f);
       return fs.statSync(fullPath).isDirectory();
@@ -67,8 +79,9 @@ async function main() {
         choices: dirs.map(d => ({ name: d, value: d })),
       },
     ]);
+
     const { default: makeVideoFromAudio } = await import('./contents/makeVideoFromAudio.js');
-    await makeVideoFromAudio({ background });
+    await makeVideoFromAudio({ background, mode });
   }
 }
 
