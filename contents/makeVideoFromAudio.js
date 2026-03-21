@@ -17,7 +17,17 @@ const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
 /** Số lượng video stock lấy từ backgrounds (có thể tăng/giảm) */
-const STOCK_VIDEO_COUNT = 3;
+const STOCK_VIDEO_COUNT = 15;
+
+/** Logo hình tròn góc trên phải */
+const LOGO_PATH = path.join(ROOT, 'logo', 'catLogo.png');
+const LOGO_SIZE = 80;
+const LOGO_MARGIN_TOP = 20;
+const LOGO_MARGIN_RIGHT = 20;
+
+/** Khung nền tối phía dưới cho subtitle (full width) */
+const SUB_BOX_HEIGHT = 115;
+const SUB_BOX_OPACITY = 0.6;
 
 const DATA_FILE_PATHS = [
   path.join(ROOT, 'channels', 'output.xlsx'),
@@ -122,7 +132,11 @@ async function readVideoUrlsFromFile() {
     const headerRow = sheet.getRow(1);
     const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'video');
     if (videoIdx < 0) throw new Error('Không tìm thấy cột Video.');
-    const trangThaiIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase().includes('trạng thái'));
+    const trangThaiIdx = headerRow.values.findIndex(v =>
+      String(v || '')
+        .toLowerCase()
+        .includes('trạng thái')
+    );
     const urls = [];
     for (let i = 2; i <= sheet.rowCount; i++) {
       const row = sheet.getRow(i);
@@ -204,22 +218,46 @@ async function processOne(backgroundName) {
 
   const scaleFilter = 'scale=-2:720';
   const videoEncode = '-c:v libx264 -crf 28 -preset medium -c:a aac -b:a 128k';
+  const hasLogo = fs.existsSync(LOGO_PATH);
+
+  const buildLogoOverlay = inputLabel => {
+    if (!hasLogo) return inputLabel;
+    const r = Math.floor(LOGO_SIZE / 2);
+    const geqExpr = `if(lte(hypot(X-W/2,Y-H/2),${r}),255,0)`;
+    return `[2:v]scale=${LOGO_SIZE}:${LOGO_SIZE},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${geqExpr}'[logo];[${inputLabel}][logo]overlay=main_w-overlay_w-${LOGO_MARGIN_RIGHT}:${LOGO_MARGIN_TOP}[vout]`;
+  };
+
   if (subtitlePath) {
     fs.copyFileSync(subtitlePath, tempSubPath);
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
-    const subFilter = `subtitles='${subPathEscaped}':force_style='FontSize=25,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Alignment=2'`;
-    const vf = `${scaleFilter},${subFilter}`;
-    console.log('Đang merge video + audio + subtitle (720p, chất lượng trung bình)...');
+    const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
+    const subFilter = `subtitles='${subPathEscaped}':force_style='FontSize=30,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Alignment=2,MarginV=12'`;
+    const v1 = `[0:v]${scaleFilter}[v1];[v1]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
+    const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
+    const inputs = hasLogo ? `-i "${tempVideoPath}" -i "${audioPath}" -i "${LOGO_PATH}"` : `-i "${tempVideoPath}" -i "${audioPath}"`;
+    console.log('Đang merge video + audio + subtitle (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
     execSync(
-      `ffmpeg -y -i "${tempVideoPath}" -i "${audioPath}" -vf "${vf}" ${videoEncode} -map 0:v -map 1:a -shortest "${outputPath}"`,
-      { stdio: 'inherit' }
+      `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -shortest "${outputPath}"`,
+      {
+        stdio: 'inherit',
+      }
     );
     fs.unlinkSync(tempSubPath);
   } else {
-    console.log('Đang merge video + audio (720p, chất lượng trung bình)...');
+    let filterComplexFinal;
+    if (hasLogo) {
+      const v1 = `[0:v]${scaleFilter}[v1]`;
+      filterComplexFinal = v1 + `;${buildLogoOverlay('v1')}`;
+    } else {
+      filterComplexFinal = `[0:v]${scaleFilter}[vout]`;
+    }
+    const inputs = hasLogo ? `-i "${tempVideoPath}" -i "${audioPath}" -i "${LOGO_PATH}"` : `-i "${tempVideoPath}" -i "${audioPath}"`;
+    console.log('Đang merge video + audio (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
     execSync(
-      `ffmpeg -y -i "${tempVideoPath}" -i "${audioPath}" -vf "${scaleFilter}" ${videoEncode} -map 0:v:0 -map 1:a:0 -shortest "${outputPath}"`,
-      { stdio: 'inherit' }
+      `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -shortest "${outputPath}"`,
+      {
+        stdio: 'inherit',
+      }
     );
   }
 
