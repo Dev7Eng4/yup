@@ -3,6 +3,6 @@ build
 downloads
 temp
 outputs
-backgrounds
 venv
-new
+backgrounds/dog
+backgrounds/outro
