@@ -20,6 +20,18 @@ const OPTIONS = [
     value: 'makeVideoFromAudio',
   },
   {
+    name: 'Tạo đoạn kết video (outro)',
+    value: 'makeOutro',
+  },
+  {
+    name: 'Gộp outro vào video',
+    value: 'mergeOutro',
+  },
+  {
+    name: 'Giảm tốc độ audio (0.95x)',
+    value: 'convertAudio',
+  },
+  {
     name: 'Thoát',
     value: 'exit',
   },
@@ -82,6 +94,21 @@ async function main() {
 
     const { default: makeVideoFromAudio } = await import('./contents/makeVideoFromAudio.js');
     await makeVideoFromAudio({ background, mode });
+  }
+
+  if (action === 'makeOutro') {
+    const { default: runMakeOutro } = await import('./contents/makeOutro.js');
+    await runMakeOutro();
+  }
+
+  if (action === 'mergeOutro') {
+    const { default: runMergeOutro } = await import('./contents/mergeOutroIntoVideo.js');
+    await runMergeOutro();
+  }
+
+  if (action === 'convertAudio') {
+    const { default: runConvertAudio } = await import('./contents/convertAudio.js');
+    await runConvertAudio();
   }
 }
 
