@@ -28,6 +28,9 @@ const STOCK_CROSSFADE_SEC = 1;
 /** Thêm vài giây so với audio khi render stock (dự phòng merge / làm tròn frame). */
 const STOCK_RENDER_EXTRA_SEC = 15;
 
+/** Hệ số slow-motion cho video stock. 2.0 = gấp đôi thời lượng (nửa tốc độ). 1.0 = bình thường. */
+const STOCK_SLOWMO_FACTOR = 2.0;
+
 /** Canvas chuẩn cho clip stock — xfade bắt buộc cùng kích thước / pixel format */
 const STOCK_CANVAS_W = 1280;
 const STOCK_CANVAS_H = 720;
@@ -42,7 +45,9 @@ function stockNormalizeFilterInner() {
   const w = STOCK_CANVAS_W;
   const h = STOCK_CANVAS_H;
   const f = STOCK_FPS;
-  return `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${f},settb=tb=1/90000,setsar=1`;
+  // setpts=N*PTS → slow-motion gấp STOCK_SLOWMO_FACTOR lần (vd 2.0 → video 13s thành 26s)
+  const slowmo = STOCK_SLOWMO_FACTOR !== 1.0 ? `,setpts=${STOCK_SLOWMO_FACTOR}*PTS` : '';
+  return `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p${slowmo},fps=${f},settb=tb=1/90000,setsar=1`;
 }
 
 function stockNormalizeFilterChain(inputLabel, outLabel) {
@@ -163,7 +168,8 @@ function getStockVideos(backgroundsDir) {
  * Trước đây chỉ so tổng sum clip → lệch (n−1)×fade (vd ~40 clip × 1s ≈ mất 40s) → cuối video đứng hình.
  */
 function buildStockSegmentPlan(videoPaths, requiredXfadeOutputSec) {
-  const durations = videoPaths.map(p => getDuration(p));
+  // Nhân duration với STOCK_SLOWMO_FACTOR vì setpts sẽ kéo dài video tương ứng
+  const durations = videoPaths.map(p => getDuration(p) * STOCK_SLOWMO_FACTOR);
   const minSegmentDur = Math.min(...durations);
   const fadeEst = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegmentDur * 0.45));
   const segments = [];
