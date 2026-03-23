@@ -58,7 +58,7 @@ function stockNormalizeFilterChain(inputLabel, outLabel) {
  * Hệ số `atempo` của ffmpeg (0.5–2.0). Nhỏ hơn 1 = đọc chậm hơn; thời lượng ≈ (độ dài gốc) / giá trị → dài ra.
  * Ví dụ 0.95 → ~5.3% dài hơn; không phải rút ngắn.
  */
-const AUDIO_ATEMPO = 0.95;
+const AUDIO_ATEMPO = 1.0;
 
 /** Logo hình tròn góc trên phải */
 const LOGO_PATH = path.join(ROOT, 'logo', 'catLogo.png');
@@ -424,7 +424,7 @@ async function processOne(backgroundName) {
     fs.copyFileSync(subtitlePath, tempSubPath);
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
     const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
-    const subFilter = `subtitles='${subPathEscaped}':charenc=UTF-8:force_style='FontSize=40,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Alignment=2,MarginV=12,Spacing=${SUBTITLE_CHAR_SPACING}'`;
+    const subFilter = `subtitles='${subPathEscaped}':charenc=UTF-8:force_style='FontSize=40,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Alignment=2,MarginV=12,Spacing=${SUBTITLE_CHAR_SPACING}'`;
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
     const inputs = hasLogo

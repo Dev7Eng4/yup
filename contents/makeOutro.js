@@ -35,7 +35,7 @@ const OUTRO_SUB_LINE_OUTLINE_COLORS = ['&H000000FF', '&H00D9F50A', '&H000000FF']
 function buildOutroColorStyleLines() {
   return OUTRO_SUB_LINE_OUTLINE_COLORS.map(
     (outlineCol, i) =>
-      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,0,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`
+      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,1,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`
   ).join('\n');
 }
 
@@ -252,7 +252,7 @@ PlayResY: 720
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Default,Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 ${buildOutroColorStyleLines()}
 
 [Events]
