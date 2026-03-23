@@ -32,6 +32,10 @@ const OPTIONS = [
     value: 'convertAudio',
   },
   {
+    name: 'Làm sạch transcript',
+    value: 'cleanSrt',
+  },
+  {
     name: 'Thoát',
     value: 'exit',
   },
@@ -109,6 +113,11 @@ async function main() {
   if (action === 'convertAudio') {
     const { default: runConvertAudio } = await import('./contents/convertAudio.js');
     await runConvertAudio();
+  }
+
+  if (action === 'cleanSrt') {
+    const { default: runCleanSrt } = await import('./contents/cleanSrt.js');
+    await runCleanSrt();
   }
 }
 

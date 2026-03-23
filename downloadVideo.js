@@ -115,76 +115,6 @@ async function downloadThumbnail(url, options = {}) {
 }
 
 /**
- * Làm sạch VTT từ YouTube: xóa inline tags <00:00:xx.xxx><c>text</c>, gộp cue trùng lặp
- */
-function cleanVtt(content) {
-  const lines = content.split('\n');
-  const cues = [];
-  let i = 0;
-
-  while (i < lines.length) {
-    const timeMatch = lines[i].match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/);
-    if (!timeMatch) {
-      i++;
-      continue;
-    }
-    const start = timeMatch[1];
-    const end = timeMatch[2];
-    i++;
-    while (i < lines.length && lines[i].trim() === '') i++;
-    const textLines = [];
-    while (i < lines.length && lines[i].trim() !== '') {
-      let text = lines[i]
-        .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}><c>([^<]*)<\/c>/g, '$1')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-      if (text) textLines.push(text);
-      i++;
-    }
-    const text = textLines.join(' ').trim();
-    if (text) {
-      const toSec = t => {
-        const [h, m, s] = t.split(':');
-        return parseInt(h, 10) * 3600 + parseInt(m, 10) * 60 + parseFloat(s);
-      };
-      cues.push({ start, end, text, duration: toSec(end) - toSec(start) });
-    }
-    i++;
-  }
-
-  const merged = [];
-  for (const cue of cues) {
-    if (cue.duration < 0.02) continue;
-    const prev = merged[merged.length - 1];
-    if (prev && prev.text === cue.text) {
-      prev.end = cue.end;
-    } else {
-      merged.push({ ...cue });
-    }
-  }
-
-  let out = 'WEBVTT\n\n';
-  for (const c of merged) {
-    out += `${c.start} --> ${c.end}\n${c.text}\n\n`;
-  }
-  return out;
-}
-
-/**
- * Chuyển SRT sang VTT (WebVTT)
- * SRT: HH:MM:SS,mmm | VTT: HH:MM:SS.mmm + header WEBVTT
- */
-function srtToVtt(srtContent) {
-  const lines = srtContent.split('\n');
-  const vttLines = ['WEBVTT', ''];
-  for (const line of lines) {
-    const vttLine = line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
-    vttLines.push(vttLine);
-  }
-  return vttLines.join('\n');
-}
-
-/**
  * Phát hiện ngôn ngữ video từ title để chọn phụ đề phù hợp
  * Dựa trên ký tự: Hangul (Hàn), Hiragana/Katakana (Nhật)
  */
@@ -200,11 +130,11 @@ function detectSubtitleLang(title) {
 
 /**
  * Tải transcript (phụ đề) dạng SRT và/hoặc VTT
- * @param {object} options.subFormat - 'srt' | 'vtt' | 'both' (mặc định: both)
+ * @param {object} options.subFormat - 'srt' | 'vtt' (mặc định: vtt)
  * @param {string} options.videoTitle - Tiêu đề video để tự detect ngôn ngữ (ja/ko/en)
  */
 async function downloadTranscript(url, options = {}) {
-  const { outputDir = DEFAULT_OUTPUT_DIR, subFormat = 'both', videoTitle = '' } = options;
+  const { outputDir = DEFAULT_OUTPUT_DIR, subFormat = 'vtt', videoTitle = '' } = options;
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   const outputTemplate = path.join(outputDir, '%(title)s-%(id)s.%(ext)s');
@@ -237,27 +167,17 @@ async function downloadTranscript(url, options = {}) {
   }
   if (lastErr) throw lastErr;
 
-  const srtFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.srt'));
-  for (const file of srtFiles) {
-    const srtPath = path.join(outputDir, file);
-    const vttPath = srtPath.replace(/\.srt$/i, '.vtt');
-    const srtContent = fs.readFileSync(srtPath, 'utf-8');
-    const vttContent = cleanVtt(srtToVtt(srtContent));
-    fs.writeFileSync(vttPath, vttContent, 'utf-8');
-    fs.unlinkSync(srtPath);
-    console.log(`Đã làm sạch và chuyển sang VTT: ${file}`);
-  }
-
-  const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
-  for (const file of vttFiles) {
-    const vttPath = path.join(outputDir, file);
-    const content = fs.readFileSync(vttPath, 'utf-8');
-    const cleaned = cleanVtt(content);
-    if (cleaned !== content) {
-      fs.writeFileSync(vttPath, cleaned, 'utf-8');
-      console.log(`Đã làm sạch VTT: ${file}`);
+  // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
+  if (targetFormat === 'vtt') {
+    const { cleanSrt } = await import('./contents/cleanSrt.js');
+    const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
+    for (const file of vttFiles) {
+      const vttPath = path.join(outputDir, file);
+      cleanSrt(vttPath);
+      fs.unlinkSync(vttPath);
     }
   }
+
   console.log('Tải transcript xong!');
 }
 

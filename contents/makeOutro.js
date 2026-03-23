@@ -35,7 +35,7 @@ const OUTRO_SUB_LINE_OUTLINE_COLORS = ['&H000000FF', '&H00D9F50A', '&H000000FF']
 function buildOutroColorStyleLines() {
   return OUTRO_SUB_LINE_OUTLINE_COLORS.map(
     (outlineCol, i) =>
-      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,0,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`,
+      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,0,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`
   ).join('\n');
 }
 
@@ -125,7 +125,7 @@ function parseSrt(content) {
     if (/^\d+$/.test(lines[0].trim())) i = 1;
     const timeLine = lines[i];
     const m = timeLine.match(
-      /(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})/,
+      /(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})/
     );
     if (!m) continue;
     const startMs = parseSrtTimeToMs(m[1]);
@@ -339,7 +339,7 @@ export default async function main() {
     assBody.includes('Dialogue:')
       ? assBody
       : `${assBody}Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\an7\\pos(${OUTRO_SUB_LEFT},${OUTRO_SUB_TOP})}.\n`,
-    'utf-8',
+    'utf-8'
   );
 
   const videoIn = path.join(OUTRO_BG_DIR, outroFile);
@@ -369,7 +369,7 @@ export default async function main() {
         'medium',
         tempVideo,
       ],
-      { stdio: 'inherit', shell: false },
+      { stdio: 'inherit', shell: false }
     );
     if (r.status !== 0) throw new Error(`ffmpeg video outro thoát ${r.status}`);
   } else {
@@ -380,7 +380,8 @@ export default async function main() {
 
   const subEscaped = tempSub.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
   const scaleFilter = 'scale=-2:720';
-  const videoToScale = `[0:v]${scaleFilter}[vpadded]`;
+  const BG_OPACITY = 0.6;
+  const videoToScale = `color=c=black:s=1280x720:r=30:d=${outroSec}[bg];[0:v]${scaleFilter}[v];[bg][v]blend=all_mode=normal:all_opacity=${BG_OPACITY}[vpadded]`;
   const subFilter = `subtitles='${subEscaped}':charenc=UTF-8`;
   const hasLogo = fs.existsSync(LOGO_PATH);
 
@@ -406,7 +407,7 @@ export default async function main() {
   console.log(`Đang ghép outro (${outroSec}s, phụ đề từ ${path.basename(subPath)})...`);
   execSync(
     `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[vout]" -an -c:v libx264 -crf 28 -preset medium -t ${outroSec} "${outPath}"`,
-    { stdio: 'inherit' },
+    { stdio: 'inherit' }
   );
 
   fs.unlinkSync(tempSub);
