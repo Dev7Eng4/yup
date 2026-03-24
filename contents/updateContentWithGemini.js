@@ -46,9 +46,11 @@ async function extractGeminiResponse(page, mode) {
   // Đợi thêm 1 chút để DOM render xong hoàn toàn phần text
   await page.waitForTimeout(1500);
 
-  return page.evaluate((evalMode) => {
+  return page.evaluate(evalMode => {
     // 1. Tìm tất cả các response block
-    const responses = Array.from(document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'));
+    const responses = Array.from(
+      document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'),
+    );
     if (responses.length === 0) return '';
 
     // Lấy node DOM của response cuối cùng (gần nhất)
@@ -61,13 +63,13 @@ async function extractGeminiResponse(page, mode) {
       if (codeBlocks.length > 0) {
         return (codeBlocks[codeBlocks.length - 1].innerText || codeBlocks[codeBlocks.length - 1].textContent || '').trim();
       }
-      
+
       // Fallback lấy bất kỳ block code nào
       const anyCode = lastResponse.querySelectorAll('code');
       if (anyCode.length > 0) {
         return (anyCode[anyCode.length - 1].innerText || anyCode[anyCode.length - 1].textContent || '').trim();
       }
-      
+
       return (lastResponse.innerText || lastResponse.textContent || '').trim();
     }
     // === KẾT THÚC LOGIC CLEAN SRT ===
@@ -85,39 +87,44 @@ async function extractGeminiResponse(page, mode) {
       if (node.nodeType === Node.ELEMENT_NODE && node.children.length > 2) {
         continue;
       }
-      
+
       const text = node.textContent || '';
       if (regex.test(text)) {
-         foundParent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-         // Tiếp tục tìm để lấy cái cuối cùng xuất hiện (tránh nhầm thẻ gốc trên đầu)
+        foundParent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        // Tiếp tục tìm để lấy cái cuối cùng xuất hiện (tránh nhầm thẻ gốc trên đầu)
       }
     }
 
     if (foundParent) {
-       // Chúng ta lấy text của "thẻ liền kề" nằm CÙNG CẤP với cái chứa thẻ "Kết quả bạn mong muốn:"
-       // Ví dụ: <p><b>Kết quả bạn mong muốn:</b></p>  ---lấy--->  <p>Văn bản cần lấy</p>
-       
-       let target = foundParent;
-       
-       // Trèo lên từ thẻ <b> / <strong> lên đến thẻ line-block của nó (<p>, <li>, <div> chứa nó trực tiếp)
-       while (target && target.parentElement && target.parentElement !== lastResponse && ['B','STRONG','SPAN','EM','I'].includes(target.tagName)) {
-           target = target.parentElement;
-       }
+      // Chúng ta lấy text của "thẻ liền kề" nằm CÙNG CẤP với cái chứa thẻ "Kết quả bạn mong muốn:"
+      // Ví dụ: <p><b>Kết quả bạn mong muốn:</b></p>  ---lấy--->  <p>Văn bản cần lấy</p>
 
-       const nextSibling = target.nextElementSibling;
-       if (nextSibling) {
-           return nextSibling.innerText?.trim() || nextSibling.textContent?.trim() || '';
-       }
+      let target = foundParent;
+
+      // Trèo lên từ thẻ <b> / <strong> lên đến thẻ line-block của nó (<p>, <li>, <div> chứa nó trực tiếp)
+      while (
+        target &&
+        target.parentElement &&
+        target.parentElement !== lastResponse &&
+        ['B', 'STRONG', 'SPAN', 'EM', 'I'].includes(target.tagName)
+      ) {
+        target = target.parentElement;
+      }
+
+      const nextSibling = target.nextElementSibling;
+      if (nextSibling) {
+        return nextSibling.innerText?.trim() || nextSibling.textContent?.trim() || '';
+      }
     }
 
     // Fallback nếu vẫn không tìm thấy thẻ sibling (Gemini gom hết vô text thuần)
     const fullText = lastResponse.innerText || lastResponse.textContent || '';
     const lastIndex = fullText.search(new RegExp(regex.source, 'g'));
     if (lastIndex !== -1) {
-       // Cắt đến dấu xuống dòng tiếp theo hoặc hết text
-       const substr = fullText.substring(lastIndex);
-       const contentAfter = substr.replace(regex, ''); // Xoá chữ "Kêt quả..."
-       return contentAfter.trim();
+      // Cắt đến dấu xuống dòng tiếp theo hoặc hết text
+      const substr = fullText.substring(lastIndex);
+      const contentAfter = substr.replace(regex, ''); // Xoá chữ "Kêt quả..."
+      return contentAfter.trim();
     }
 
     // Nếu không có token, trả về toàn bộ
@@ -154,9 +161,7 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
 
       if (mode.startsWith('cleanSrt')) {
         currentMode = currentPart === 1 ? 'cleanSrt_first' : 'cleanSrt_next';
-        prompt = currentPart === 1 
-          ? checkFirstParagraph(title, chunk) 
-          : checkLastParagraph(title, chunk, currentPart);
+        prompt = currentPart === 1 ? checkFirstParagraph(title, chunk) : checkLastParagraph(title, chunk, currentPart);
       } else {
         prompt = updateContentOutro(chunk);
       }
@@ -172,7 +177,7 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
       await page.waitForTimeout(500);
 
       // Paste nội dung prompt (đồng thời xoá nội dung cũ nếu còn sót lại)
-      await page.evaluate((textToPaste) => {
+      await page.evaluate(textToPaste => {
         const editor = document.querySelector('div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor');
         if (editor) {
           editor.focus();
@@ -195,10 +200,10 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
 
       // Lấy kết quả
       const result = await extractGeminiResponse(page, currentMode);
-      console.log(`Đã nhận kết quả từ Gemini cho phần ${currentPart}.`);
-      
+      console.log(`Đã nhận kết quả từ Gemini cho phần ${currentPart}.`, result);
+
       results.push(result);
-      
+
       // Chờ thêm một nhịp nhẹ trước khi gửi prompt tiếp theo
       if (currentPart < chunks.length) {
         await page.waitForTimeout(2000);
