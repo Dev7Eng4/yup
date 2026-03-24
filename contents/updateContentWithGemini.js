@@ -1,112 +1,24 @@
 /**
- * Gửi nội dung SRT tới Gemini qua Puppeteer, nhận kết quả text đã xử lý.
- * Kết nối vào Chrome đang mở (qua remote debugging port) để dùng session Google có sẵn.
- * Nếu Chrome chưa bật debugging, sẽ tự restart Chrome với --remote-debugging-port.
+ * Gửi nội dung SRT tới Gemini qua Playwright, nhận kết quả text đã xử lý.
+ * Dùng Chrome profile persistent (từ makeChromeProfile) để giữ session Google login.
  */
 
-import puppeteer from 'puppeteer';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { execSync, spawn } from 'child_process';
+import { getOrCreateProfile } from './makeChromeProfile.js';
 import { updateContentOutro } from '../promts/updateContentOutro.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(__dirname, '..');
 const GEMINI_URL = 'https://gemini.google.com/app';
-const DEBUG_PORT = 9222;
-
-/**
- * Tìm đường dẫn Chrome và user data dir theo OS.
- */
-function getChromeInfo() {
-  const platform = process.platform;
-  if (platform === 'win32') {
-    const chromePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const userDataDir = `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`;
-    return { chromePath, userDataDir };
-  }
-  if (platform === 'darwin') {
-    const home = process.env.HOME || '';
-    return {
-      chromePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      userDataDir: `${home}/Library/Application Support/Google/Chrome`,
-    };
-  }
-  const home = process.env.HOME || '';
-  return {
-    chromePath: 'google-chrome',
-    userDataDir: `${home}/.config/google-chrome`,
-  };
-}
-
-/**
- * Thử kết nối tới Chrome qua debugging port.
- * Nếu chưa bật, tắt Chrome hiện tại và mở lại với --remote-debugging-port.
- */
-async function connectToChrome() {
-  const browserURL = `http://127.0.0.1:${DEBUG_PORT}`;
-
-  // Thử kết nối trước
-  try {
-    const browser = await puppeteer.connect({ browserURL });
-    console.log('Đã kết nối vào Chrome đang chạy.');
-    return browser;
-  } catch {
-    // Chrome chưa bật debugging port — cần restart
-  }
-
-  console.log(`Chrome chưa bật debugging port. Đang restart Chrome với --remote-debugging-port=${DEBUG_PORT}...`);
-  const { chromePath, userDataDir } = getChromeInfo();
-
-  // Tắt Chrome hiện tại
-  try {
-    if (process.platform === 'win32') {
-      execSync('taskkill /F /IM chrome.exe /T', { stdio: 'ignore' });
-    } else {
-      execSync('pkill -f chrome', { stdio: 'ignore' });
-    }
-  } catch { /* Chrome có thể chưa chạy */ }
-
-  // Chờ Chrome tắt hẳn
-  await new Promise(r => setTimeout(r, 2000));
-
-  // Mở lại Chrome với debugging port (giữ nguyên user data dir + session login)
-  const chromeProcess = spawn(chromePath, [
-    `--remote-debugging-port=${DEBUG_PORT}`,
-    `--user-data-dir=${userDataDir}`,
-    '--restore-last-session',
-  ], {
-    detached: true,
-    stdio: 'ignore',
-  });
-  chromeProcess.unref();
-
-  // Đợi Chrome khởi động
-  console.log('Đang đợi Chrome khởi động...');
-  for (let i = 0; i < 15; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    try {
-      const browser = await puppeteer.connect({ browserURL });
-      console.log('Đã kết nối vào Chrome.');
-      return browser;
-    } catch { /* chưa sẵn sàng */ }
-  }
-
-  throw new Error('Không thể kết nối tới Chrome sau 15 giây. Hãy mở Chrome thủ công với flag: --remote-debugging-port=9222');
-}
 
 /**
  * Đợi cho đến khi Gemini trả lời xong (không còn loading/streaming).
  */
 async function waitForGeminiResponse(page, timeoutMs = 120000) {
-  const startTime = Date.now();
-
   // Đợi response container xuất hiện
   await page.waitForSelector('.model-response-text, .response-content, message-content', {
     timeout: timeoutMs,
   });
 
-  // Đợi cho đến khi streaming xong
+  // Đợi cho đến khi streaming xong (nút Stop biến mất)
+  const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
     const isStreaming = await page.evaluate(() => {
       const stopBtn = document.querySelector('button[aria-label="Stop response"], mat-icon[data-mat-icon-name="stop_circle"]');
@@ -117,54 +29,97 @@ async function waitForGeminiResponse(page, timeoutMs = 120000) {
       return false;
     });
     if (!isStreaming) break;
-    await new Promise(r => setTimeout(r, 1000));
+    await page.waitForTimeout(1000);
   }
 
   // Chờ thêm 2 giây để chắc chắn response hoàn tất
-  await new Promise(r => setTimeout(r, 2000));
+  await page.waitForTimeout(2000);
 }
 
 /**
- * Lấy text kết quả từ response cuối cùng của Gemini.
+ * Lấy text kết quả từ response của Gemini.
+ * Tìm text "Kết quả bạn mong muốn:" rồi lấy nội dung thẻ kế tiếp.
  */
 async function extractGeminiResponse(page) {
+  // Đợi thêm 1 chút để DOM render xong hoàn toàn phần text
+  await page.waitForTimeout(1500);
+
   return page.evaluate(() => {
-    // Tìm trong toàn bộ page text chứa "Kết quả bạn mong muốn:"
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    // 1. Tìm tất cả các response block
+    const responses = Array.from(document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'));
+    if (responses.length === 0) return '';
+
+    // Lấy node DOM của response cuối cùng (gần nhất)
+    const lastResponse = responses[responses.length - 1];
+
+    // Tạo regex tìm chuỗi (có/không in đậm)
+    const regex = /(?:\*\*?)?Kết quả bạn mong muốn:(?:\*\*?)?\s*/;
+
+    // 2. Quét DOM bằng TreeWalker để tìm thẻ chứa token
+    const walker = document.createTreeWalker(lastResponse, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
     let node;
+    let foundParent = null;
+
     while ((node = walker.nextNode())) {
-      if (node.textContent.includes('Kết quả bạn mong muốn:')) {
-        // Lấy thẻ cha chứa text này
-        const parent = node.parentElement;
-        if (!parent) continue;
-        // Lấy thẻ kế tiếp (nextElementSibling) — đây là thẻ chứa content
-        const nextEl = parent.nextElementSibling;
-        if (nextEl) {
-          return nextEl.innerText?.trim() || '';
-        }
+      // Bỏ qua các container chung chung để nhắm vào thẻ chứa nội dung nhỏ nhất (như p, li, b, text)
+      if (node.nodeType === Node.ELEMENT_NODE && node.children.length > 2) {
+        continue;
+      }
+      
+      const text = node.textContent || '';
+      if (regex.test(text)) {
+         foundParent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+         // Tiếp tục tìm để lấy cái cuối cùng xuất hiện (tránh nhầm thẻ gốc trên đầu)
       }
     }
-    return '';
+
+    if (foundParent) {
+       // Chúng ta lấy text của "thẻ liền kề" nằm CÙNG CẤP với cái chứa thẻ "Kết quả bạn mong muốn:"
+       // Ví dụ: <p><b>Kết quả bạn mong muốn:</b></p>  ---lấy--->  <p>Văn bản cần lấy</p>
+       
+       let target = foundParent;
+       
+       // Trèo lên từ thẻ <b> / <strong> lên đến thẻ line-block của nó (<p>, <li>, <div> chứa nó trực tiếp)
+       while (target && target.parentElement && target.parentElement !== lastResponse && ['B','STRONG','SPAN','EM','I'].includes(target.tagName)) {
+           target = target.parentElement;
+       }
+
+       const nextSibling = target.nextElementSibling;
+       if (nextSibling) {
+           return nextSibling.innerText?.trim() || nextSibling.textContent?.trim() || '';
+       }
+    }
+
+    // Fallback nếu vẫn không tìm thấy thẻ sibling (Gemini gom hết vô text thuần)
+    const fullText = lastResponse.innerText || lastResponse.textContent || '';
+    const lastIndex = fullText.search(new RegExp(regex.source, 'g'));
+    if (lastIndex !== -1) {
+       // Cắt đến dấu xuống dòng tiếp theo hoặc hết text
+       const substr = fullText.substring(lastIndex);
+       const contentAfter = substr.replace(regex, ''); // Xoá chữ "Kêt quả..."
+       return contentAfter.trim();
+    }
+
+    // Nếu không có token, trả về toàn bộ
+    return (lastResponse.innerText || lastResponse.textContent || '').trim();
   });
 }
 
 /**
- * Gửi prompt tới Gemini qua Puppeteer và nhận kết quả.
- * Kết nối vào Chrome đang mở, mở tab mới, gửi prompt, lấy kết quả, đóng tab.
+ * Gửi prompt tới Gemini và nhận kết quả.
+ * Dùng Playwright với Chrome profile persistent (đã đăng nhập Google trước).
  * @param {string} srtText - Nội dung SRT cần xử lý
  * @returns {Promise<string>} Text đã được Gemini xử lý
  */
 export async function updateContentWithGemini(srtText) {
   const prompt = updateContentOutro(srtText);
-  console.log('Đang kết nối tới Chrome...');
+  console.log('Đang mở Chrome với profile đã lưu...');
 
-  const browser = await connectToChrome();
-  let page;
+  const { context, page } = await getOrCreateProfile({ visible: true });
 
   try {
-    // Mở tab mới trong Chrome đang chạy
-    page = await browser.newPage();
-    await page.goto(GEMINI_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Mở Gemini trong tab hiện tại
+    await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
     console.log('Đã mở Gemini, đang gửi prompt...');
 
     // Đợi textarea/input xuất hiện
@@ -173,10 +128,10 @@ export async function updateContentWithGemini(srtText) {
 
     // Focus vào input
     await page.click(inputSelector);
-    await new Promise(r => setTimeout(r, 500));
+    await page.waitForTimeout(500);
 
     // Paste nội dung prompt
-    await page.evaluate(async (text) => {
+    await page.evaluate((text) => {
       const editor = document.querySelector('div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor');
       if (editor) {
         editor.focus();
@@ -184,7 +139,7 @@ export async function updateContentWithGemini(srtText) {
       }
     }, prompt);
 
-    await new Promise(r => setTimeout(r, 1000));
+    await page.waitForTimeout(1000);
 
     // Nhấn nút gửi
     const sendBtnSelector = 'button.send-button, button[aria-label="Send message"], button[data-mat-icon-name="send"]';
@@ -202,8 +157,8 @@ export async function updateContentWithGemini(srtText) {
 
     return result;
   } finally {
-    // Chỉ đóng tab, KHÔNG đóng browser (để user tiếp tục dùng Chrome)
-    if (page) await page.close();
+    // Đóng context (giữ lại profile trên ổ đĩa)
+    await context.close();
   }
 }
 
