@@ -1,2 +1,3 @@
-2026/03/24-22:44:46.698 5a70 Creating DB B:\youtube\tools\yup\chrome-profile\profile1\Default\shared_proto_db since it was missing.
-2026/03/24-22:44:46.714 5a70 Reusing MANIFEST B:\youtube\tools\yup\chrome-profile\profile1\Default\shared_proto_db/MANIFEST-000001
+2026/03/24-22:52:59.076 65f4 Reusing MANIFEST B:\youtube\tools\yup\chrome-profile\profile1\Default\shared_proto_db/MANIFEST-000001
+2026/03/24-22:52:59.077 65f4 Recovering log #3
+2026/03/24-22:52:59.077 65f4 Reusing old log B:\youtube\tools\yup\chrome-profile\profile1\Default\shared_proto_db/000003.log 

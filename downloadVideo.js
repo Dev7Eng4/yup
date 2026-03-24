@@ -195,7 +195,7 @@ async function downloadTranscript(url, options = {}) {
 
         let finalSrt = '';
         const CHUNK_SIZE = 100;
-        
+
         // Tạo mảng gồm các chunk
         const chunks = [];
         for (let i = 0; i < cues.length; i += CHUNK_SIZE) {
@@ -208,13 +208,13 @@ async function downloadTranscript(url, options = {}) {
           // Trả về mảng kết quả tương ứng với mảng chunks truyền vào
           const processedChunks = await updateContentWithGemini(chunks, {
             mode: 'cleanSrt_first', // Hàm con sẽ tự động biết phần 2 trở đi là _next
-            title: videoTitle
+            title: videoTitle,
           });
-          
+
           for (let i = 0; i < chunks.length; i++) {
             const chunk = chunks[i];
             const processedChunk = processedChunks[i];
-            
+
             if (processedChunk && processedChunk.trim() !== '') {
               finalSrt += processedChunk.trim() + '\n\n';
             } else {
