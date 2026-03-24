@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
-import { updateContentWithGemini } from './updateContentWithGemini.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -271,96 +270,7 @@ function stockNormalizeFilterInner() {
   return `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${f},settb=tb=1/90000,setsar=1`;
 }
 
-/**
- * Trích raw SRT text từ các cues trong window outro.
- * Trả về chuỗi SRT gốc (cả timecode) để Gemini hiểu ngữ cảnh.
- */
-function extractSrtTextFromWindow(cues, totalMs, outroDurationMs) {
-  const windowStartMs = Math.max(0, totalMs - outroDurationMs);
-  const filtered = [];
-  let idx = 1;
-  for (const c of cues) {
-    if (c.startMs <= windowStartMs || c.startMs >= totalMs) continue;
-    const ns = Math.max(0, c.startMs - windowStartMs);
-    if (ns >= outroDurationMs) continue;
-    // Format lại timecode tương đối (từ 0)
-    const fmtTime = ms => {
-      const h = Math.floor(ms / 3600000);
-      const m = Math.floor((ms % 3600000) / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const mls = ms % 1000;
-      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(mls).padStart(3,'0')}`;
-    };
-    const ne = Math.max(0, c.endMs - windowStartMs);
-    filtered.push(`${idx}\n${fmtTime(ns)} --> ${fmtTime(ne)}\n${c.text}`);
-    idx++;
-  }
-  return filtered.join('\n\n');
-}
-
-/**
- * Build ASS từ text đã xử lý bởi Gemini (mỗi câu 1 dòng).
- * Phân bổ đều thời gian cho các dòng text.
- */
-function buildOutroAssFromProcessedText(processedText, outroDurationMs) {
-  const lines = processedText.split('\n').map(l => l.trim()).filter(Boolean);
-  if (lines.length === 0) return null;
-
-  const endStr = formatAssTime(outroDurationMs);
-  const timePerLine = outroDurationMs / lines.length;
-
-  /* Tự xuống dòng nếu text vượt 3/4 video width */
-  const MAX_LINE_WIDTH = 1280 * 0.65;
-  const estCharWidth = OUTRO_SUB_FONT_SIZE * 0.55 + OUTRO_SUB_CHAR_SPACING;
-  const maxCharsPerLine = Math.max(1, Math.floor((MAX_LINE_WIDTH - OUTRO_SUB_LEFT) / estCharWidth));
-
-  const dialogues = [];
-  let row = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const startMs = Math.round(i * timePerLine);
-    const startStr = formatAssTime(startMs);
-    const text = lines[i];
-    if (!text) continue;
-
-    const chars = Array.from(text);
-    const segments = [];
-    for (let j = 0; j < chars.length; j += maxCharsPerLine) {
-      segments.push(chars.slice(j, j + maxCharsPerLine).join(''));
-    }
-
-    const colorStyle = `OutroC${i % OUTRO_SUB_LINE_OUTLINE_COLORS.length}`;
-    let charOffset = 0;
-    for (const seg of segments) {
-      const y = OUTRO_SUB_TOP + row * OUTRO_SUB_LINE_HEIGHT;
-      const karaokeText = buildOutroKaraokeAssText(seg, OUTRO_SUB_KARAOKE_CS, charOffset);
-      if (!karaokeText) continue;
-      const tag = `{\\an7\\pos(${OUTRO_SUB_LEFT},${y})\\fs${OUTRO_SUB_FONT_SIZE}\\fsp${OUTRO_SUB_CHAR_SPACING}}`;
-      dialogues.push(`Dialogue: 0,${startStr},${endStr},${colorStyle},,0,0,0,,${tag}${karaokeText}`);
-      charOffset += Array.from(seg).length;
-      row++;
-    }
-  }
-
-  const header = `[Script Info]
-Title: Outro
-ScriptType: v4.00+
-WrapStyle: 0
-PlayResX: 1280
-PlayResY: 720
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-${buildOutroColorStyleLines()}
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
-  return header + dialogues.join('\n');
-}
-
-export default async function main({ outroSeconds } = {}) {
+export default async function main() {
   if (!fs.existsSync(DOWNLOADS_DIR)) {
     console.error('Không có thư mục downloads/.');
     return;
@@ -386,23 +296,19 @@ export default async function main({ outroSeconds } = {}) {
     },
   ]);
 
-  // Nếu chưa có outroSeconds, hỏi user
-  if (!outroSeconds) {
-    const { inputSeconds } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'inputSeconds',
-        message: 'Độ dài outro (giây), ví dụ 14:',
-        validate: v => {
-          const n = parseFloat(String(v).replace(',', '.'));
-          if (!Number.isFinite(n) || n <= 0) return 'Nhập số giây > 0';
-          return true;
-        },
-        filter: v => parseFloat(String(v).replace(',', '.')),
+  const { outroSeconds } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'outroSeconds',
+      message: 'Độ dài outro (giây), ví dụ 14:',
+      validate: v => {
+        const n = parseFloat(String(v).replace(',', '.'));
+        if (!Number.isFinite(n) || n <= 0) return 'Nhập số giây > 0';
+        return true;
       },
-    ]);
-    outroSeconds = inputSeconds;
-  }
+      filter: v => parseFloat(String(v).replace(',', '.')),
+    },
+  ]);
 
   const outroSec = outroSeconds;
   const outroMs = Math.round(outroSec * 1000);
@@ -420,35 +326,11 @@ export default async function main({ outroSeconds } = {}) {
     return;
   }
 
-  // === BƯỚC 1: Parse SRT và trích transcript trong window outro ===
   const cues = parseSubtitleFile(subPath);
   const totalMs = Math.round(totalAudioSec * 1000);
-  const rawSrtText = extractSrtTextFromWindow(cues, totalMs, outroMs);
-
-  if (!rawSrtText.trim()) {
-    console.warn('Không có dòng phụ đề nào trong khoảng cuối.');
-    return;
-  }
-
-  console.log(`Đã trích ${rawSrtText.split('\n\n').length} đoạn SRT từ ${outroSec}s cuối.`);
-  console.log('Đang gửi tới Gemini để xử lý...');
-
-  // === BƯỚC 2: Gửi SRT text tới Gemini và nhận kết quả ===
-  const processedText = await updateContentWithGemini(rawSrtText);
-
-  if (!processedText || !processedText.trim()) {
-    console.error('Gemini không trả về kết quả. Dừng xử lý.');
-    return;
-  }
-
-  console.log('--- Kết quả từ Gemini ---');
-  console.log(processedText);
-  console.log('-------------------------');
-
-  // === BƯỚC 3: Tạo ASS subtitle từ text đã xử lý ===
-  const assBody = buildOutroAssFromProcessedText(processedText, outroMs);
-  if (!assBody || !assBody.includes('Dialogue:')) {
-    console.warn('Không tạo được phụ đề từ kết quả Gemini — vẫn tạo video (không chữ).');
+  const assBody = buildOutroAss(cues, totalMs, outroMs);
+  if (!assBody.includes('Dialogue:')) {
+    console.warn('Không có dòng phụ đề nào trong khoảng cuối — vẫn tạo video (không chữ).');
   }
 
   if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -456,13 +338,12 @@ export default async function main({ outroSeconds } = {}) {
   const tempSub = path.join(OUTPUT_DIR, 'temp_outro_sub.ass');
   fs.writeFileSync(
     tempSub,
-    assBody && assBody.includes('Dialogue:')
+    assBody.includes('Dialogue:')
       ? assBody
-      : `${assBody || ''}Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\\an7\\pos(${OUTRO_SUB_LEFT},${OUTRO_SUB_TOP})}.\n`,
+      : `${assBody}Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\an7\\pos(${OUTRO_SUB_LEFT},${OUTRO_SUB_TOP})}.\n`,
     'utf-8'
   );
 
-  // === BƯỚC 4: Tạo video outro bằng ffmpeg (giữ nguyên logic cũ) ===
   const videoIn = path.join(OUTRO_BG_DIR, outroFile);
   const vidDur = getDuration(videoIn);
   const tempVideo = path.join(OUTPUT_DIR, 'temp_outro_video.mp4');
@@ -525,7 +406,7 @@ export default async function main({ outroSeconds } = {}) {
 
   const inputs = hasLogo ? `-i "${tempVideo}" -i "${LOGO_PATH}"` : `-i "${tempVideo}"`;
 
-  console.log(`Đang ghép outro (${outroSec}s, phụ đề từ Gemini)...`);
+  console.log(`Đang ghép outro (${outroSec}s, phụ đề từ ${path.basename(subPath)})...`);
   execSync(
     `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[vout]" -an -c:v libx264 -crf 28 -preset medium -t ${outroSec} "${outPath}"`,
     { stdio: 'inherit' }

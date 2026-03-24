@@ -149,7 +149,7 @@ async function downloadTranscript(url, options = {}) {
       await youtubedl(url, {
         output: outputTemplate,
         skipDownload: true,
-        writeSub: true,
+        writeSub: false,
         writeAutoSub: true,
         convertSubs: targetFormat,
         subLangs: lang,
@@ -167,16 +167,16 @@ async function downloadTranscript(url, options = {}) {
   }
   if (lastErr) throw lastErr;
 
-  // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
-  if (targetFormat === 'vtt') {
-    const { cleanSrt } = await import('./contents/cleanSrt.js');
-    const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
-    for (const file of vttFiles) {
-      const vttPath = path.join(outputDir, file);
-      cleanSrt(vttPath);
-      fs.unlinkSync(vttPath);
-    }
-  }
+  // // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
+  // if (targetFormat === 'vtt') {
+  //   const { cleanSrt } = await import('./contents/cleanSrt.js');
+  //   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
+  //   for (const file of vttFiles) {
+  //     const vttPath = path.join(outputDir, file);
+  //     cleanSrt(vttPath);
+  //     fs.unlinkSync(vttPath);
+  //   }
+  // }
 
   console.log('Tải transcript xong!');
 }

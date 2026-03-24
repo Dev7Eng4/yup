@@ -56,14 +56,15 @@ function cleanSrt(vttPath) {
         const nextItem = prevArr[index + 1];
 
         if (!nextItem || nextItem.isTimeLine) return acc;
-        return [...acc, `${acc.length + 1}\n${normalize(curr.rawStart)} --> ${normalize(nextItem.rawEnd)}\n${nextItem.text}\n`];
+
+        return [...acc, `${normalize(curr.rawStart)} --> ${normalize(nextItem.rawEnd)}\n${nextItem.text}\n`];
       }
 
       const prevItem = prevArr[index - 1];
 
       if (prevItem && prevItem.isTimeLine) return acc;
 
-      return [...acc, `${acc.length + 1}\n${normalize(curr.rawStart)} --> ${normalize(curr.rawEnd)}\n${curr.text}\n`];
+      return [...acc, `${normalize(curr.rawStart)} --> ${normalize(curr.rawEnd)}\n${curr.text}\n`];
     }, [])
     .join('\n');
   console.log('🚀 ~ cleanSrt ~ srt:', srt);
