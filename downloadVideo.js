@@ -64,9 +64,14 @@ async function downloadVideo(url, options = {}) {
 
   console.log('Đang tải video...');
 
+  // Sử dụng format cứng để bắt buộc tải H264/MP4 (Window hỗ trợ tốt nhất).
+  // Đôi khi 'best' sẽ ra .mkv hoặc .webm (codec vp9) khiến một số phần mềm không đọc được.
+  const actualFormat = format === 'best' ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' : format;
+
   const subprocess = youtubedl.exec(url, {
     output: outputTemplate,
-    format,
+    format: actualFormat,
+    mergeOutputFormat: 'mp4', // Yêu cầu ffmpeg gộp vào container mp4
     writeThumbnail: true,
     noCheckCertificates: true,
     noWarnings: true,
@@ -167,16 +172,67 @@ async function downloadTranscript(url, options = {}) {
   }
   if (lastErr) throw lastErr;
 
-  // // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
-  // if (targetFormat === 'vtt') {
-  //   const { cleanSrt } = await import('./contents/cleanSrt.js');
-  //   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
-  //   for (const file of vttFiles) {
-  //     const vttPath = path.join(outputDir, file);
-  //     cleanSrt(vttPath);
-  //     fs.unlinkSync(vttPath);
-  //   }
-  // }
+  // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
+  if (targetFormat === 'vtt') {
+    const { cleanSrt } = await import('./contents/cleanSrt.js');
+    const { updateContentWithGemini } = await import('./contents/updateContentWithGemini.js');
+
+    const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
+    for (const file of vttFiles) {
+      const vttPath = path.join(outputDir, file);
+      // cleanSrt tự động tạo ra file .srt tương ứng
+      cleanSrt(vttPath);
+      fs.unlinkSync(vttPath);
+
+      // Xử lý bằng Gemini cho file SRT vừa tạo
+      const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
+      if (fs.existsSync(srtPath)) {
+        const content = fs.readFileSync(srtPath, 'utf8');
+        const cues = content
+          .split(/\n\n+/)
+          .map(c => c.trim())
+          .filter(Boolean);
+
+        let finalSrt = '';
+        const CHUNK_SIZE = 100;
+        
+        // Tạo mảng gồm các chunk
+        const chunks = [];
+        for (let i = 0; i < cues.length; i += CHUNK_SIZE) {
+          chunks.push(cues.slice(i, i + CHUNK_SIZE).join('\n\n'));
+        }
+
+        console.log(`Bắt đầu update nội dung SRT bằng Gemini (${chunks.length} phần) trong cùng một phiên xử lý...`);
+
+        try {
+          // Trả về mảng kết quả tương ứng với mảng chunks truyền vào
+          const processedChunks = await updateContentWithGemini(chunks, {
+            mode: 'cleanSrt_first', // Hàm con sẽ tự động biết phần 2 trở đi là _next
+            title: videoTitle
+          });
+          
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const processedChunk = processedChunks[i];
+            
+            if (processedChunk && processedChunk.trim() !== '') {
+              finalSrt += processedChunk.trim() + '\n\n';
+            } else {
+              // Bị thiếu hoặc trả về trống → dùng bản gốc
+              finalSrt += chunk + '\n\n';
+            }
+          }
+        } catch (err) {
+          console.error('Lỗi khi xử lý hàng loạt qua Gemini:', err.message);
+          // Fallback nguyên bản
+          finalSrt = cues.join('\n\n') + '\n\n';
+        }
+
+        fs.writeFileSync(srtPath, finalSrt.trim() + '\n', 'utf-8');
+        console.log(`✅ Đã update SRT qua Gemini cho ${path.basename(srtPath)}`);
+      }
+    }
+  }
 
   console.log('Tải transcript xong!');
 }
@@ -243,13 +299,14 @@ async function downloadSingleVideo(url) {
 
   try {
     const result = await getVideoInfo(url);
+    console.log('🚀 ~ downloadSingleVideo ~ result:', result);
     await downloadVideo(url, { outputDir: DEFAULT_OUTPUT_DIR });
+    await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
     try {
       await downloadTranscript(url, { outputDir: DEFAULT_OUTPUT_DIR, videoTitle: result.title });
     } catch (err) {
       console.warn('Không tải được transcript:', err.message);
     }
-    await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
     return result;
   } catch (err) {
     console.error(`Lỗi tải ${url}:`, err.message);
