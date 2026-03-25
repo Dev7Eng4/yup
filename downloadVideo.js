@@ -21,7 +21,6 @@ async function getVideoInfo(url) {
     dumpSingleJson: true,
     noCheckCertificates: true,
     noWarnings: true,
-    cookiesFromBrowser: 'chrome',
     addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
   });
 
@@ -76,7 +75,6 @@ async function downloadVideo(url, options = {}) {
     writeThumbnail: true,
     noCheckCertificates: true,
     noWarnings: true,
-    cookiesFromBrowser: 'chrome',
     addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
   });
 
@@ -116,7 +114,6 @@ async function downloadThumbnail(url, options = {}) {
     writeThumbnail: true,
     noCheckCertificates: true,
     noWarnings: true,
-    cookiesFromBrowser: 'chrome',
     addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
   });
   console.log('Tải thumbnail xong!');
@@ -164,7 +161,6 @@ async function downloadTranscript(url, options = {}) {
         sleepSubtitles: 5,
         noCheckCertificates: true,
         noWarnings: true,
-        cookiesFromBrowser: 'chrome',
         addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
       });
       lastErr = null;
@@ -234,7 +230,6 @@ async function downloadAudio(url, options = {}) {
     audioFormat,
     noCheckCertificates: true,
     noWarnings: true,
-    cookiesFromBrowser: 'chrome',
     addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
   });
 
