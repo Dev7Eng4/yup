@@ -13,10 +13,11 @@
 import { chromium } from 'playwright';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const PROFILE_DIR = path.join(ROOT, 'chrome-profile', 'profile1');
+const PROFILE_DIR = path.join(ROOT, 'chrome-profile');
 
 /**
  * Mở Chrome với persistent context (profile lưu trên ổ đĩa).
@@ -44,7 +45,27 @@ export async function getOrCreateProfile(options = {}) {
     args.push(`--window-position=${windowPosition || '-2000,-2000'}`);
   }
 
-  const context = await chromium.launchPersistentContext(PROFILE_DIR, {
+  let activeProfileDir = PROFILE_DIR;
+
+  // Nếu không phải là phiên đăng nhập gốc, ta nhân bản profile sạch ra một thư mục tạm
+  // Việc này giúp PROFILE_DIR (ảnh gốc) không bao giờ bị Playwright ghi thêm rác/cache làm phình to
+  if (!options.isLoginRun) {
+    const TEMP_PROFILE_DIR = path.join(ROOT, 'temp-chrome-profile');
+    console.log('Copying pristine chrome-profile to temporary environment to prevent cache bloat...');
+    if (fs.existsSync(TEMP_PROFILE_DIR)) {
+      fs.rmSync(TEMP_PROFILE_DIR, { recursive: true, force: true });
+    }
+    if (fs.existsSync(PROFILE_DIR)) {
+      try {
+        fs.cpSync(PROFILE_DIR, TEMP_PROFILE_DIR, { recursive: true });
+      } catch (err) {
+        console.warn('Cảnh báo không thể copy toàn bộ chrome-profile (có thể có file đang bị lock):', err.message);
+      }
+    }
+    activeProfileDir = TEMP_PROFILE_DIR;
+  }
+
+  const context = await chromium.launchPersistentContext(activeProfileDir, {
     channel: 'chrome',        // Dùng Chrome thật (đã cài trên máy)
     headless,
     args,
@@ -70,7 +91,7 @@ async function main() {
   console.log('Đang mở Chrome để tạo profile...');
   console.log(`Profile sẽ lưu tại: ${PROFILE_DIR}`);
 
-  const { context, page } = await getOrCreateProfile({ visible: true });
+  const { context, page } = await getOrCreateProfile({ visible: true, isLoginRun: true });
 
   // Mở trang đăng nhập Google
   await page.goto('https://accounts.google.com', { waitUntil: 'domcontentloaded' });

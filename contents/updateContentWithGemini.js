@@ -4,7 +4,6 @@
  */
 
 import { getOrCreateProfile } from './makeChromeProfile.js';
-import { updateContentOutro } from '../promts/updateContentOutro.js';
 import { checkFirstParagraph, checkLastParagraph } from '../promts/checkTextContent.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -42,11 +41,11 @@ async function waitForGeminiResponse(page, timeoutMs = 120000) {
  * Nếu là cleanSrt_*, lấy từ block <code> chứa định dạng markdown.
  * Còn lại thì lấy sau text "Kết quả bạn mong muốn:".
  */
-async function extractGeminiResponse(page, mode) {
+async function extractGeminiResponse(page) {
   // Đợi thêm 1 chút để DOM render xong hoàn toàn phần text
   await page.waitForTimeout(1500);
 
-  return page.evaluate(evalMode => {
+  return page.evaluate(() => {
     // 1. Tìm tất cả các response block
     const responses = Array.from(
       document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'),
@@ -56,80 +55,22 @@ async function extractGeminiResponse(page, mode) {
     // Lấy node DOM của response cuối cùng (gần nhất)
     const lastResponse = responses[responses.length - 1];
 
-    // === XỬ LÝ RIÊNG CHO CHẾ ĐỘ CLEAN SRT ===
-    if (evalMode === 'cleanSrt_first' || evalMode === 'cleanSrt_next') {
-      // Tìm thẻ code có data-test-id="code-content"
-      const codeBlocks = lastResponse.querySelectorAll('code[data-test-id="code-content"]');
-      if (codeBlocks.length > 0) {
-        return (codeBlocks[codeBlocks.length - 1].innerText || codeBlocks[codeBlocks.length - 1].textContent || '').trim();
-      }
-
-      // Fallback lấy bất kỳ block code nào
-      const anyCode = lastResponse.querySelectorAll('code');
-      if (anyCode.length > 0) {
-        return (anyCode[anyCode.length - 1].innerText || anyCode[anyCode.length - 1].textContent || '').trim();
-      }
-
-      return (lastResponse.innerText || lastResponse.textContent || '').trim();
-    }
-    // === KẾT THÚC LOGIC CLEAN SRT ===
-
-    // Tạo regex tìm chuỗi (có/không in đậm)
-    const regex = /(?:\*\*?)?Kết quả bạn mong muốn:(?:\*\*?)?\s*/;
-
-    // 2. Quét DOM bằng TreeWalker để tìm thẻ chứa token
-    const walker = document.createTreeWalker(lastResponse, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
-    let node;
-    let foundParent = null;
-
-    while ((node = walker.nextNode())) {
-      // Bỏ qua các container chung chung để nhắm vào thẻ chứa nội dung nhỏ nhất (như p, li, b, text)
-      if (node.nodeType === Node.ELEMENT_NODE && node.children.length > 2) {
-        continue;
-      }
-
-      const text = node.textContent || '';
-      if (regex.test(text)) {
-        foundParent = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        // Tiếp tục tìm để lấy cái cuối cùng xuất hiện (tránh nhầm thẻ gốc trên đầu)
-      }
+    // Trích xuất kết quả từ Markdown Code block (áp dụng mặc định)
+    // Tìm thẻ code có data-test-id="code-content"
+    const codeBlocks = lastResponse.querySelectorAll('code[data-test-id="code-content"]');
+    if (codeBlocks.length > 0) {
+      return (codeBlocks[codeBlocks.length - 1].innerText || codeBlocks[codeBlocks.length - 1].textContent || '').trim();
     }
 
-    if (foundParent) {
-      // Chúng ta lấy text của "thẻ liền kề" nằm CÙNG CẤP với cái chứa thẻ "Kết quả bạn mong muốn:"
-      // Ví dụ: <p><b>Kết quả bạn mong muốn:</b></p>  ---lấy--->  <p>Văn bản cần lấy</p>
-
-      let target = foundParent;
-
-      // Trèo lên từ thẻ <b> / <strong> lên đến thẻ line-block của nó (<p>, <li>, <div> chứa nó trực tiếp)
-      while (
-        target &&
-        target.parentElement &&
-        target.parentElement !== lastResponse &&
-        ['B', 'STRONG', 'SPAN', 'EM', 'I'].includes(target.tagName)
-      ) {
-        target = target.parentElement;
-      }
-
-      const nextSibling = target.nextElementSibling;
-      if (nextSibling) {
-        return nextSibling.innerText?.trim() || nextSibling.textContent?.trim() || '';
-      }
+    // Fallback lấy bất kỳ block code nào
+    const anyCode = lastResponse.querySelectorAll('code');
+    if (anyCode.length > 0) {
+      return (anyCode[anyCode.length - 1].innerText || anyCode[anyCode.length - 1].textContent || '').trim();
     }
 
-    // Fallback nếu vẫn không tìm thấy thẻ sibling (Gemini gom hết vô text thuần)
-    const fullText = lastResponse.innerText || lastResponse.textContent || '';
-    const lastIndex = fullText.search(new RegExp(regex.source, 'g'));
-    if (lastIndex !== -1) {
-      // Cắt đến dấu xuống dòng tiếp theo hoặc hết text
-      const substr = fullText.substring(lastIndex);
-      const contentAfter = substr.replace(regex, ''); // Xoá chữ "Kêt quả..."
-      return contentAfter.trim();
-    }
-
-    // Nếu không có token, trả về toàn bộ
+    // Fallback vét cạn nếu không có thẻ code nào
     return (lastResponse.innerText || lastResponse.textContent || '').trim();
-  }, mode);
+  });
 }
 
 /**
@@ -156,15 +97,8 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
 
     for (let currentPart = 1; currentPart <= chunks.length; currentPart++) {
       const chunk = chunks[currentPart - 1];
-      let currentMode = mode;
-      let prompt = '';
-
-      if (mode.startsWith('cleanSrt')) {
-        currentMode = currentPart === 1 ? 'cleanSrt_first' : 'cleanSrt_next';
-        prompt = currentPart === 1 ? checkFirstParagraph(title, chunk) : checkLastParagraph(title, chunk, currentPart);
-      } else {
-        prompt = updateContentOutro(chunk);
-      }
+      let currentMode = currentPart === 1 ? 'cleanSrt_first' : 'cleanSrt_next';
+      let prompt = currentPart === 1 ? checkFirstParagraph(title, chunk) : checkLastParagraph(title, chunk, currentPart);
 
       console.log(`\n--- Đang gửi prompt phần ${currentPart}/${chunks.length} (mode: ${currentMode}) ---`);
 
@@ -199,8 +133,8 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
       await waitForGeminiResponse(page, 150000);
 
       // Lấy kết quả
-      const result = await extractGeminiResponse(page, currentMode);
-      console.log(`Đã nhận kết quả từ Gemini cho phần ${currentPart}.`, result);
+      const result = await extractGeminiResponse(page);
+      console.log(`Đã nhận kết quả từ Gemini cho phần ${currentPart}.`);
 
       results.push(result);
 

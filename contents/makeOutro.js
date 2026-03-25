@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
-import { updateContentWithGemini } from './updateContentWithGemini.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -170,19 +169,14 @@ function parseSubtitleFile(filePath) {
   return ext === '.vtt' ? parseVtt(raw) : parseSrt(raw);
 }
 
-/** Hai cue liên tiếp cùng một hàng nếu kết thúc cue trước và bắt đầu cue sau cùng giây (floor ms/1000). */
-function sameCalendarSecond(endMs, startMs) {
-  return Math.floor(endMs / 1000) === Math.floor(startMs / 1000);
-}
-
 /**
  * Cues trong cửa sổ cuối → timeline 0..outroDurationMs.
  * Chỉ lấy cue có startTime nghiêm ngặt sau mốc (total - outro), vd. audio 10:22 + outro 20s
  * → mốc 10:02; cue 00:09:58 --> ... bị loại vì start < 10:02.
  * Mỗi dòng: bắt đầu đúng lúc xuất hiện (theo SRT), kết thúc = hết video (giữ đến cuối).
- * Vị trí: top-left, xếp dọc. Các cue liên tiếp cùng giây (vd. kết 13:38.xxx → bắt 13:38.xxx) gộp một hàng, nối chữ.
+ * Vị trí: top-left, xếp dọc. 
+ * Từng cue một được đẩy lên thành 1 hàng với màu riêng biệt thay vì ghép nối lại.
  * Mỗi dòng dùng karaoke ASS (\\k) để lộ từng ký tự; chỉnh OUTRO_SUB_KARAOKE_CS để đổi tốc độ.
- * Chữ trắng, không viền màu.
  */
 function buildOutroAss(cues, totalMs, outroDurationMs) {
   const windowStartMs = Math.max(0, totalMs - outroDurationMs);
@@ -195,21 +189,6 @@ function buildOutroAss(cues, totalMs, outroDurationMs) {
     inWindow.push(c);
   }
 
-  const groups = [];
-  if (inWindow.length > 0) {
-    let chunk = [inWindow[0]];
-    for (let i = 1; i < inWindow.length; i++) {
-      const prev = inWindow[i - 1];
-      const cur = inWindow[i];
-      if (sameCalendarSecond(prev.endMs, cur.startMs)) chunk.push(cur);
-      else {
-        groups.push(chunk);
-        chunk = [cur];
-      }
-    }
-    groups.push(chunk);
-  }
-
   /* Tự xuống dòng nếu text vượt 3/4 video width */
   const MAX_LINE_WIDTH = 1280 * 0.65;
   const estCharWidth = OUTRO_SUB_FONT_SIZE * 0.55 + OUTRO_SUB_CHAR_SPACING;
@@ -218,12 +197,13 @@ function buildOutroAss(cues, totalMs, outroDurationMs) {
   const dialogues = [];
   let row = 0;
   let colorIndex = 0;
-  for (const chunk of groups) {
-    const startMs = Math.min(...chunk.map(c => c.startMs));
-    const ns = Math.max(0, startMs - windowStartMs);
+  
+  for (const c of inWindow) {
+    const ns = Math.max(0, c.startMs - windowStartMs);
     if (ns >= outroDurationMs) continue;
+    
     const startStr = formatAssTime(ns);
-    const mergedText = chunk.map(c => String(c.text).replace(/\r/g, '').replace(/\n/g, '')).join('');
+    const mergedText = String(c.text).replace(/\r/g, '').replace(/\n/g, '').trim();
     if (!mergedText) continue;
 
     const chars = Array.from(mergedText);
@@ -272,30 +252,19 @@ function stockNormalizeFilterInner() {
 }
 
 /**
- * Trích raw SRT text từ các cues trong window outro.
- * Trả về chuỗi SRT gốc (cả timecode) để Gemini hiểu ngữ cảnh.
+ * Trích raw SRT text từ các cues trong window outro, chỉ lấy nguyên text để tạo chữ chạy trên video.
  */
 function extractSrtTextFromWindow(cues, totalMs, outroDurationMs) {
   const windowStartMs = Math.max(0, totalMs - outroDurationMs);
   const filtered = [];
-  let idx = 1;
   for (const c of cues) {
     if (c.startMs <= windowStartMs || c.startMs >= totalMs) continue;
     const ns = Math.max(0, c.startMs - windowStartMs);
     if (ns >= outroDurationMs) continue;
-    // Format lại timecode tương đối (từ 0)
-    const fmtTime = ms => {
-      const h = Math.floor(ms / 3600000);
-      const m = Math.floor((ms % 3600000) / 60000);
-      const s = Math.floor((ms % 60000) / 1000);
-      const mls = ms % 1000;
-      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(mls).padStart(3,'0')}`;
-    };
-    const ne = Math.max(0, c.endMs - windowStartMs);
-    filtered.push(`${idx}\n${fmtTime(ns)} --> ${fmtTime(ne)}\n${c.text}`);
-    idx++;
+    // Lấy text mộc, thay thế lặp chuỗi nếu có ngoặc, etc..
+    filtered.push(c.text);
   }
-  return filtered.join('\n\n');
+  return filtered.join('\n');
 }
 
 /**
@@ -423,32 +392,21 @@ export default async function main({ outroSeconds } = {}) {
   // === BƯỚC 1: Parse SRT và trích transcript trong window outro ===
   const cues = parseSubtitleFile(subPath);
   const totalMs = Math.round(totalAudioSec * 1000);
-  const rawSrtText = extractSrtTextFromWindow(cues, totalMs, outroMs);
+  // Lọc ra các dòng chữ nằm trong window outro để log chơi
+  const windowStartMs = Math.max(0, totalMs - outroMs);
+  const inWindowCues = cues.filter(c => c.startMs > windowStartMs && c.startMs < totalMs);
 
-  if (!rawSrtText.trim()) {
+  if (inWindowCues.length === 0) {
     console.warn('Không có dòng phụ đề nào trong khoảng cuối.');
     return;
   }
 
-  console.log(`Đã trích ${rawSrtText.split('\n\n').length} đoạn SRT từ ${outroSec}s cuối.`);
-  console.log('Đang gửi tới Gemini để xử lý...');
+  console.log(`Đã trích ${inWindowCues.length} dòng sub nguyên gốc từ ${outroSec}s cuối.`);
 
-  // === BƯỚC 2: Gửi SRT text tới Gemini và nhận kết quả ===
-  const processedText = await updateContentWithGemini(rawSrtText);
-
-  if (!processedText || !processedText.trim()) {
-    console.error('Gemini không trả về kết quả. Dừng xử lý.');
-    return;
-  }
-
-  console.log('--- Kết quả từ Gemini ---');
-  console.log(processedText);
-  console.log('-------------------------');
-
-  // === BƯỚC 3: Tạo ASS subtitle từ text đã xử lý ===
-  const assBody = buildOutroAssFromProcessedText(processedText, outroMs);
+  // === BƯỚC 3: Tạo ASS subtitle từ mảng cues nguyên bản (giữ chính xác mốc thời gian xuất hiện theo original SRT) ===
+  const assBody = buildOutroAss(cues, totalMs, outroMs);
   if (!assBody || !assBody.includes('Dialogue:')) {
-    console.warn('Không tạo được phụ đề từ kết quả Gemini — vẫn tạo video (không chữ).');
+    console.warn('Không tạo được phụ đề ở đoạn outro — vẫn tạo video (không chữ).');
   }
 
   if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });

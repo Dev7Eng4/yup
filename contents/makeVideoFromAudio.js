@@ -67,8 +67,17 @@ const LOGO_MARGIN_TOP = 20;
 const LOGO_MARGIN_RIGHT = 20;
 
 /** Khung nền tối phía dưới cho subtitle (full width) */
-const SUB_BOX_HEIGHT = 150;
+const SUB_BOX_HEIGHT = 200;
 const SUB_BOX_OPACITY = 0.5;
+
+/** Kích thước font chữ của Subtitle */
+const SUB_FONT_SIZE = 80;
+
+/** Khoảng cách từ mép trên của dải nền màu đen rơi xuống chữ (padding top) */
+const SUB_PADDING_TOP = 15;
+
+/** Paddings margin trái/phải cho subtitle so với viền màn hình video */
+const SUB_PADDING_HORIZONTAL = 40;
 
 /** Khoảng cách giữa các ký tự (ASS Spacing, pixel) — tăng nếu chữ vẫn sát */
 const SUBTITLE_CHAR_SPACING = 2;
@@ -352,6 +361,88 @@ async function readVideoUrlsFromFile() {
 }
 
 /**
+ * Chuyển SRT sang định dạng file ASS với cấu hình Style: Box nền Mờ, dễ đọc.
+ * @param {string} srtPath - Đường dẫn file SRT đầu vào
+ * @param {string} assPath - Nơi lưu file ASS đầu ra
+ */
+function convertSrtToAss(srtPath, assPath) {
+  const content = fs.readFileSync(srtPath, 'utf8');
+  const cues = content.split(/\n\n+/).filter(Boolean);
+  
+  // Alignment=8 (Top Center) - chữ sẽ neo ở mép trên và văn bản mọc dần xuống dưới nếu nhiều dòng.
+  // MarginV đo từ màn hình xuống mép trên chữ (= H_video - H_box + Padding_Top) 
+  const marginV = STOCK_CANVAS_H - SUB_BOX_HEIGHT + SUB_PADDING_TOP;
+
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${STOCK_CANVAS_W}
+PlayResY: ${STOCK_CANVAS_H}
+WrapStyle: 1
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,${SUB_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,${SUBTITLE_CHAR_SPACING},0,1,2.0,0,8,${SUB_PADDING_HORIZONTAL},${SUB_PADDING_HORIZONTAL},${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  let events = '';
+  for (const cue of cues) {
+    const lines = cue.split('\n').map(l => l.trim()).filter(Boolean);
+    const timeRe = /(\d{2}):(\d{2}):(\d{2}),(\d{3}) \-\-> (\d{2}):(\d{2}):(\d{2}),(\d{3})/;
+    let timeLineIdx = -1;
+    let match = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+        match = lines[i].match(timeRe);
+        if (match) {
+            timeLineIdx = i;
+            break;
+        }
+    }
+    
+    if (timeLineIdx === -1 || !match) continue;
+    
+    // ASS time format: H:MM:SS.cs (cents của giây) thay vì HH:MM:SS,ms
+    const formatTime = (h,m,s,ms) => {
+       const cs = Math.floor(parseInt(ms) / 10).toString().padStart(2, '0');
+       return `${parseInt(h)}:${m}:${s}.${cs}`;
+    };
+    
+    const start = formatTime(match[1], match[2], match[3], match[4]);
+    const end = formatTime(match[5], match[6], match[7], match[8]);
+    
+    const textLines = lines.slice(timeLineIdx + 1);
+    
+    // Tính toán số lượng kí tự tối đa trên 1 dòng để tự động quấn dòng (Word Wrap Programmatic cho chữ CJK)
+    const cw = STOCK_CANVAS_W - (SUB_PADDING_HORIZONTAL * 2); 
+    const cSize = SUB_FONT_SIZE + SUBTITLE_CHAR_SPACING;
+    const maxCharsPerLine = Math.max(1, Math.floor(cw / cSize));
+    
+    const wrappedLines = [];
+    for (const rawLine of textLines) {
+       let currentLine = '';
+       // dùng Array.from để tách an toàn cả unicode emoji nếu có
+       for (const char of Array.from(rawLine)) { 
+          if (currentLine.length >= maxCharsPerLine) {
+             wrappedLines.push(currentLine);
+             currentLine = '';
+          }
+          currentLine += char;
+       }
+       if (currentLine) wrappedLines.push(currentLine);
+    }
+    
+    const text = wrappedLines.join('\\N'); // \\N là kí tự xuống dòng trong ass
+    
+    events += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`;
+  }
+  
+  fs.writeFileSync(assPath, header + events, 'utf-8');
+}
+
+/**
  * Xử lý 1: tạo video từ audio có sẵn trong downloads
  */
 async function processOne(backgroundName) {
@@ -406,7 +497,7 @@ async function processOne(backgroundName) {
   renderStockVideoWithCrossfades(stockSegments, stockRenderTarget, tempVideoPath, xfadeFilterPath);
   if (fs.existsSync(xfadeFilterPath)) fs.unlinkSync(xfadeFilterPath);
 
-  const tempSubPath = subtitlePath ? path.join(OUTPUT_DIR, 'temp_sub' + path.extname(subtitlePath)) : null;
+  const tempSubPath = subtitlePath ? path.join(OUTPUT_DIR, 'temp_sub.ass') : null;
 
   const scaleFilter = 'scale=-2:720';
   const videoToScale = `[0:v]${scaleFilter}[vpadded]`;
@@ -421,16 +512,23 @@ async function processOne(backgroundName) {
   };
 
   if (subtitlePath) {
-    fs.copyFileSync(subtitlePath, tempSubPath);
+    // Thay vì dùng subtitle gốc, ta chuyển đổi file sang định dạng ASS có sẵn Box Opacity
+    convertSrtToAss(subtitlePath, tempSubPath);
+
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
+    
+    // Sử dụng drawbox của FFmpeg để tạo một thanh màu đen cắt ngang video
     const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
-    const subFilter = `subtitles='${subPathEscaped}':charenc=UTF-8:force_style='FontSize=40,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=1,Alignment=2,MarginV=12,Spacing=${SUBTITLE_CHAR_SPACING}'`;
+    
+    // Subtitle được căn chỉnh đè lên bằng file ASS
+    const subFilter = `subtitles='${subPathEscaped}'`;
+    
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
     const inputs = hasLogo
       ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${LOGO_PATH}"`
       : `-i "${tempVideoPath}" -i "${workingAudioPath}"`;
-    console.log('Đang merge video + audio + subtitle (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
+    console.log('Đang merge video + audio + Dịch subtitle sang ASS (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
     execSync(
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
