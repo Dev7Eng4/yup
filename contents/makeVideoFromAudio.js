@@ -340,11 +340,11 @@ async function readVideoUrlsFromFile(inputFile = null) {
       const outroTimeStr = outroTimeIdx >= 0 ? String(row.getCell(outroTimeIdx).value || '').trim() : '';
       const outroTimeNum = parseFloat(outroTimeStr) || 0;
       if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-        items.push({ 
-          url: val, 
+        items.push({
+          url: val,
           background: bgVal || 'cat',
           outroVideo: outroVideoStr,
-          outroTime: outroTimeNum > 0 ? outroTimeNum : 0
+          outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
         });
       }
     }
@@ -374,11 +374,11 @@ async function readVideoUrlsFromFile(inputFile = null) {
     const outroTimeStr = outroTimeIdx >= 0 ? (cells[outroTimeIdx] || '').trim() : '';
     const outroTimeNum = parseFloat(outroTimeStr) || 0;
     if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-      items.push({ 
-        url: val, 
+      items.push({
+        url: val,
         background: bgVal || 'cat',
         outroVideo: outroVideoStr,
-        outroTime: outroTimeNum > 0 ? outroTimeNum : 0
+        outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
       });
     }
   }
@@ -393,9 +393,9 @@ async function readVideoUrlsFromFile(inputFile = null) {
 function convertSrtToAss(srtPath, assPath) {
   const content = fs.readFileSync(srtPath, 'utf8');
   const cues = content.split(/\n\n+/).filter(Boolean);
-  
+
   // Alignment=8 (Top Center) - chữ sẽ neo ở mép trên và văn bản mọc dần xuống dưới nếu nhiều dòng.
-  // MarginV đo từ màn hình xuống mép trên chữ (= H_video - H_box + Padding_Top) 
+  // MarginV đo từ màn hình xuống mép trên chữ (= H_video - H_box + Padding_Top)
   const marginV = STOCK_CANVAS_H - SUB_BOX_HEIGHT + SUB_PADDING_TOP;
 
   const header = `[Script Info]
@@ -414,56 +414,61 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   let events = '';
   for (const cue of cues) {
-    const lines = cue.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = cue
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
     const timeRe = /(\d{2}):(\d{2}):(\d{2}),(\d{3}) \-\-> (\d{2}):(\d{2}):(\d{2}),(\d{3})/;
     let timeLineIdx = -1;
     let match = null;
-    
+
     for (let i = 0; i < lines.length; i++) {
-        match = lines[i].match(timeRe);
-        if (match) {
-            timeLineIdx = i;
-            break;
-        }
+      match = lines[i].match(timeRe);
+      if (match) {
+        timeLineIdx = i;
+        break;
+      }
     }
-    
+
     if (timeLineIdx === -1 || !match) continue;
-    
+
     // ASS time format: H:MM:SS.cs (cents của giây) thay vì HH:MM:SS,ms
-    const formatTime = (h,m,s,ms) => {
-       const cs = Math.floor(parseInt(ms) / 10).toString().padStart(2, '0');
-       return `${parseInt(h)}:${m}:${s}.${cs}`;
+    const formatTime = (h, m, s, ms) => {
+      const cs = Math.floor(parseInt(ms) / 10)
+        .toString()
+        .padStart(2, '0');
+      return `${parseInt(h)}:${m}:${s}.${cs}`;
     };
-    
+
     const start = formatTime(match[1], match[2], match[3], match[4]);
     const end = formatTime(match[5], match[6], match[7], match[8]);
-    
+
     const textLines = lines.slice(timeLineIdx + 1);
-    
+
     // Tính toán số lượng kí tự tối đa trên 1 dòng để tự động quấn dòng (Word Wrap Programmatic cho chữ CJK)
-    const cw = STOCK_CANVAS_W - (SUB_PADDING_HORIZONTAL * 2); 
+    const cw = STOCK_CANVAS_W - SUB_PADDING_HORIZONTAL * 2;
     const cSize = SUB_FONT_SIZE + SUBTITLE_CHAR_SPACING;
     const maxCharsPerLine = Math.max(1, Math.floor(cw / cSize));
-    
+
     const wrappedLines = [];
     for (const rawLine of textLines) {
-       let currentLine = '';
-       // dùng Array.from để tách an toàn cả unicode emoji nếu có
-       for (const char of Array.from(rawLine)) { 
-          if (currentLine.length >= maxCharsPerLine) {
-             wrappedLines.push(currentLine);
-             currentLine = '';
-          }
-          currentLine += char;
-       }
-       if (currentLine) wrappedLines.push(currentLine);
+      let currentLine = '';
+      // dùng Array.from để tách an toàn cả unicode emoji nếu có
+      for (const char of Array.from(rawLine)) {
+        if (currentLine.length >= maxCharsPerLine) {
+          wrappedLines.push(currentLine);
+          currentLine = '';
+        }
+        currentLine += char;
+      }
+      if (currentLine) wrappedLines.push(currentLine);
     }
-    
+
     const text = wrappedLines.join('\\N'); // \\N là kí tự xuống dòng trong ass
-    
+
     events += `Dialogue: 0,${start},${end},Default,,0,0,0,,${text}\n`;
   }
-  
+
   fs.writeFileSync(assPath, header + events, 'utf-8');
 }
 
@@ -548,13 +553,13 @@ async function processOne(bgNameArg) {
     convertSrtToAss(subtitlePath, tempSubPath);
 
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
-    
+
     // Sử dụng drawbox của FFmpeg để tạo một thanh màu đen cắt ngang video
     const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
-    
+
     // Subtitle được căn chỉnh đè lên bằng file ASS
     const subFilter = `subtitles='${subPathEscaped}'`;
-    
+
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
     const inputs = hasLogo
@@ -625,7 +630,7 @@ async function main(options = {}) {
 
     const { downloadSingleVideo } = await import('../downloadVideo.js');
     const { default: makeOutro } = await import('./makeOutro.js');
-    
+
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
     const actualInputFile = inputFile || DATA_FILE_PATHS.find(p => fs.existsSync(p));
     let destFolder = path.join(ROOT, 'channels');
@@ -633,21 +638,32 @@ async function main(options = {}) {
       destFolder = path.dirname(actualInputFile);
     }
 
-    const progressFile = actualInputFile ? actualInputFile.replace(/\.(xlsx|csv)$/, '_progress.json') : path.join(ROOT, 'channels', 'progress.json');
+    const progressFile = actualInputFile
+      ? actualInputFile.replace(/\.(xlsx|csv)$/, '_progress.json')
+      : path.join(ROOT, 'channels', 'progress.json');
     let progressData = {};
     if (fs.existsSync(progressFile)) {
-      try { progressData = JSON.parse(fs.readFileSync(progressFile, 'utf8')); } catch(e) {}
+      try {
+        progressData = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
+      } catch (e) {}
     }
 
     function sanitizeFilename(name) {
-      return String(name).replace(/[/\\?%*:|"<>]/g, '-').replace(/\s+/g, ' ').trim() || 'video_output';
+      return (
+        String(name)
+          .replace(/[/\\?%*:|"<>]/g, '-')
+          .replace(/\s+/g, ' ')
+          .trim() || 'video_output'
+      );
     }
 
     // Luống bắt đầu batch -> Clean folder outputs
     if (fs.existsSync(OUTPUT_DIR)) {
       const outputFiles = fs.readdirSync(OUTPUT_DIR);
       for (const f of outputFiles) {
-        try { fs.unlinkSync(path.join(OUTPUT_DIR, f)); } catch(e) {}
+        try {
+          fs.unlinkSync(path.join(OUTPUT_DIR, f));
+        } catch (e) {}
       }
       console.log('Đã dọn dẹp thư mục outputs/ trước khi chạy batch.');
     }
@@ -658,23 +674,23 @@ async function main(options = {}) {
       if (outroTime > 0) {
         console.log(`\t> Sẽ tạo outro duration=${outroTime}s, video=${outroVideo || 'mặc định'}`);
       }
-      
+
       const result = await downloadSingleVideo(url);
       if (result) {
         try {
           await processOne(background);
           console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
-          
+
           const audioPath = getAudioFile();
           const baseName = path.basename(audioPath, path.extname(audioPath));
           let finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg.mp4`); // Mặc định nếu không có outro
-          
+
           if (outroTime > 0) {
             console.log(`\n---> Gọi makeOutro.js cho ${url}`);
             try {
               await makeOutro({ outroSeconds: outroTime, outroFile: outroVideo, mode: 'batch' });
               console.log(`ĐÃ HOÀN THÀNH OUTRO: ${url}`);
-              
+
               console.log(`\n---> Gọi ghép video chính + outro...`);
               const { default: mergeOutroIntoVideo } = await import('./mergeOutroIntoVideo.js');
 
@@ -683,7 +699,7 @@ async function main(options = {}) {
 
               await mergeOutroIntoVideo({ mode: 'batch', fullFile: fullF, outroFile: outroF });
               console.log(`ĐÃ MERGE OUTRO VÀO VIDEO CHÍNH.`);
-              
+
               // mergeOutroIntoVideo trả ra: [tên-video-gốc]-merged.mp4
               // vì fullFile là `${baseName}-with-bg.mp4` nên output là `${baseName}-with-bg-merged.mp4`
               finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg-merged.mp4`);
@@ -691,14 +707,14 @@ async function main(options = {}) {
               console.error('Lỗi tạo/ghép outro:', err.message);
             }
           }
-          
+
           // Copy / Move final video vào thư mục channels/{folder tên channel} với tên = title video
           if (fs.existsSync(finalVideoPath)) {
             const finalFilenameBase = sanitizeFilename(result.title);
             const destPath = path.join(destFolder, finalFilenameBase + '.mp4');
             fs.copyFileSync(finalVideoPath, destPath);
             console.log(`\n>>> Đã xuất file video hoàn chỉnh: ${destPath}`);
-            
+
             // Tìm và copy thumbnail từ thư mục downloads
             if (fs.existsSync(DOWNLOADS_DIR)) {
               const downloadFiles = fs.readdirSync(DOWNLOADS_DIR);
@@ -715,43 +731,44 @@ async function main(options = {}) {
           } else {
             console.error(`\n>>> Lỗi: Không tìm thấy file video đầu ra ${finalVideoPath}`);
           }
-          
+
           // Xóa tất cả file trong outputs để xử lý video tiếp theo
           if (fs.existsSync(OUTPUT_DIR)) {
             const outputFiles = fs.readdirSync(OUTPUT_DIR);
             for (const f of outputFiles) {
-              try { fs.unlinkSync(path.join(OUTPUT_DIR, f)); } catch(e) {}
+              try {
+                fs.unlinkSync(path.join(OUTPUT_DIR, f));
+              } catch (e) {}
             }
             console.log('Đã dọn dẹp outputs/ cẩn thận cho video tiếp theo.');
           }
-          
+
           // Sau khi xong 1 video, append vào progress, gồm cả description và tags
           progressData[url] = {
             status: 'Đã tạo video',
             description: result.description || '',
-            tags: Array.isArray(result.tags) ? result.tags.join(', ') : (result.tags || '')
+            tags: Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '',
           };
           fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
-
         } catch (err) {
           console.error('Lỗi tạo video:', err.message);
         }
       }
     }
     console.log(`\nHoàn thành xử lý ${items.length} video.`);
-    
+
     // Tự động gọi script đồng bộ bằng child_process
     try {
       console.log('\nĐang tự động đồng bộ trạng thái vào file Excel...');
       const cp = await import('child_process');
       const syncScript = path.join(ROOT, 'syncStatusToExcel.js');
       if (fs.existsSync(syncScript)) {
-          cp.execSync(`node "${syncScript}"`, { stdio: 'inherit' });
+        cp.execSync(`node "${syncScript}"`, { stdio: 'inherit' });
       }
-    } catch(e) {
+    } catch (e) {
       console.error('Lỗi tự động đồng bộ:', e.message);
     }
-    
+
     return;
   }
 

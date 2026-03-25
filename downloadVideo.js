@@ -173,43 +173,43 @@ async function downloadTranscript(url, options = {}) {
   if (lastErr) throw lastErr;
 
   // Nếu tải VTT: gọi cleanSrt làm sạch → xuất SRT → xóa file VTT
-  // if (targetFormat === 'vtt') {
-  //   const { cleanSrt } = await import('./contents/cleanSrt.js');
-  //   const { updateContentWithGemini } = await import('./contents/updateContentWithGemini.js');
+  if (targetFormat === 'vtt') {
+    const { cleanSrt } = await import('./contents/cleanSrt.js');
+    const { updateContentWithGemini } = await import('./contents/updateContentWithGemini.js');
 
-  //   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
-  //   for (const file of vttFiles) {
-  //     const vttPath = path.join(outputDir, file);
-  //     // cleanSrt tự động tạo ra file .srt tương ứng
-  //     cleanSrt(vttPath);
-  //     fs.unlinkSync(vttPath);
+    const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
+    for (const file of vttFiles) {
+      const vttPath = path.join(outputDir, file);
+      // cleanSrt tự động tạo ra file .srt tương ứng
+      cleanSrt(vttPath);
+      fs.unlinkSync(vttPath);
 
-  //     // Xử lý bằng Gemini cho file SRT vừa tạo
-  //     const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
-  //     if (fs.existsSync(srtPath)) {
-  //       const originalSrtPath = srtPath.replace(/\.srt$/i, '.original.srt');
-  //       fs.copyFileSync(srtPath, originalSrtPath);
-  //       console.log(`Đã lưu bản gốc SRT trước khi xử lý tại: ${path.basename(originalSrtPath)}`);
+      // Xử lý bằng Gemini cho file SRT vừa tạo
+      const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
+      if (fs.existsSync(srtPath)) {
+        const originalSrtPath = srtPath.replace(/\.srt$/i, '.original.srt');
+        fs.copyFileSync(srtPath, originalSrtPath);
+        console.log(`Đã lưu bản gốc SRT trước khi xử lý tại: ${path.basename(originalSrtPath)}`);
 
-  //       const content = fs.readFileSync(srtPath, 'utf8');
+        const content = fs.readFileSync(srtPath, 'utf8');
 
-  //       console.log(`Bắt đầu update nội dung SRT bằng Gemini trong cùng một phiên xử lý...`);
-  //       let finalSrt = content; // Mặc định là gốc nếu có lỗi
+        console.log(`Bắt đầu update nội dung SRT bằng Gemini trong cùng một phiên xử lý...`);
+        let finalSrt = content; // Mặc định là gốc nếu có lỗi
 
-  //       try {
-  //         finalSrt = await updateContentWithGemini(content, {
-  //           mode: 'cleanSrt_first',
-  //           title: videoTitle,
-  //         });
-  //       } catch (err) {
-  //         console.error('Lỗi khi xử lý hàng loạt qua Gemini:', err.message);
-  //       }
+        try {
+          finalSrt = await updateContentWithGemini(content, {
+            mode: 'cleanSrt_first',
+            title: videoTitle,
+          });
+        } catch (err) {
+          console.error('Lỗi khi xử lý hàng loạt qua Gemini:', err.message);
+        }
 
-  //       fs.writeFileSync(srtPath, finalSrt.trim() + '\n', 'utf-8');
-  //       console.log(`✅ Đã update SRT qua Gemini cho ${path.basename(srtPath)}`);
-  //     }
-  //   }
-  // }
+        fs.writeFileSync(srtPath, finalSrt.trim() + '\n', 'utf-8');
+        console.log(`✅ Đã update SRT qua Gemini cho ${path.basename(srtPath)}`);
+      }
+    }
+  }
 
   console.log('Tải transcript xong!');
 }

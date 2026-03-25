@@ -4,7 +4,7 @@
  */
 
 import { getOrCreateProfile } from './makeChromeProfile.js';
-import { checkContentSrt, checkFirstParagraph, checkLastParagraph } from '../promts/checkTextContent.js';
+import { checkContentSrt, updateTranscriptSrt } from '../promts/updateContent.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
 const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
@@ -71,7 +71,7 @@ async function extractGeminiResponse(page) {
 }
 
 /**
- * Gửi prompt lên giao diện chat hiện tại trên page và trả về kết quả 
+ * Gửi prompt lên giao diện chat hiện tại trên page và trả về kết quả
  */
 async function sendPromptToPage(page, prompt, label) {
   const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
@@ -128,7 +128,7 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
 
   // Mở trang Gemini thẳng luôn trên tab được giao
   await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  
+
   const result = await sendPromptToPage(page, prompt, `phần ${index + 1}/${totalChunks}`);
   return { index, result };
 }
@@ -141,9 +141,13 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
   const { mode = 'outro', title = '' } = options;
 
   // Tách chunk từ file srt gốc
-  const cues = typeof rawSrtContent === 'string' 
-    ? rawSrtContent.split(/\n\n+/).map(c => c.trim()).filter(Boolean)
-    : rawSrtContent; 
+  const cues =
+    typeof rawSrtContent === 'string'
+      ? rawSrtContent
+          .split(/\n\n+/)
+          .map(c => c.trim())
+          .filter(Boolean)
+      : rawSrtContent;
 
   // Tính toán thời lượng video dự kiến bằng dòng mốc thời gian của cục srt cuối cùng
   const durationMin = getSrtDurationInMinutes(cues);
@@ -170,9 +174,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
 
       for (let i = 0; i < totalChunks; i++) {
         const chunk = chunks[i];
-        let prompt = i === 0 
-          ? checkFirstParagraph(title, chunk) 
-          : checkLastParagraph(title, chunk);
+        let prompt = updateTranscriptSrt(title, chunk, `phần ${i + 1}/${totalChunks}`);
 
         console.log(`\n--- Đang gửi tuần tự prompt phần ${i + 1}/${totalChunks} ---`);
         const result = await sendPromptToPage(initialPage, prompt, `phần ${i + 1}/${totalChunks}`);
@@ -182,13 +184,13 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
           await initialPage.waitForTimeout(2000); // nghỉ nhẹ trước khi gửi phần tiếp theo
         }
       }
-    } 
+    }
 
     // KỊCH BẢN 2: VIDEO TỪ 30 PHÚT TRỞ LÊN -> CHẠY LÔ BATCH PROMISE.ALL TỐI ĐA 5 TAB NHƯ CŨ
     else {
       const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
       console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
-      
+
       const pages = [initialPage];
       for (let i = 1; i < activeConcurrency; i++) {
         pages.push(await context.newPage());
@@ -237,9 +239,16 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       const processedChunk = finalResults[i];
 
       if (processedChunk && processedChunk.trim() !== '') {
-        const origBlocks = chunk.split(/\n\n+/).map(b => b.trim()).filter(Boolean);
-        let procBlocks = processedChunk.replace(/```(srt)?/gi, '').split(/\n\n+/).map(b => b.trim()).filter(Boolean);
-        
+        const origBlocks = chunk
+          .split(/\n\n+/)
+          .map(b => b.trim())
+          .filter(Boolean);
+        let procBlocks = processedChunk
+          .replace(/```(srt)?/gi, '')
+          .split(/\n\n+/)
+          .map(b => b.trim())
+          .filter(Boolean);
+
         const procMap = {};
         for (const pb of procBlocks) {
           const lines = pb.split('\n');
@@ -264,7 +273,9 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
           mergedBlocks.push(lines.join('\n'));
         }
         if (missingIds.length > 0) {
-          console.warn(`\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(', ')}`);
+          console.warn(
+            `\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(', ')}`,
+          );
         }
         finalSrt += mergedBlocks.join('\n\n') + '\n\n';
       } else {

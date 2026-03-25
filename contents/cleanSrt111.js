@@ -13,8 +13,8 @@ function cleanSrt(vttPath) {
   text = text
     .replace(/^WEBVTT[\s\S]*?\n\n/, '')
     .replace(/align:start position:\d+%/g, '')
-    // .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
-    // .replace(/<\/?c[^>]*>/g, '')
+    .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
+    .replace(/<\/?c[^>]*>/g, '')
     .replace(/\[.*?\]/g, '') // bỏ [nhạc], [vỗ tay] v.v.
     .replace(/&[a-z]+;/g, '')
     .trim();
@@ -39,46 +39,19 @@ function cleanSrt(vttPath) {
       .filter(Boolean);
     if (!timeLine || !timeLine.includes('-->')) continue;
 
-    const subtitleText = lines
-      .join(' ')
-      .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
-      .replace(/<\/?c[^>]*>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    const parts = timeLine.split('-->').map(p => p.trim());
-    const rawStart = parts[0];
-    const rawEnd = parts[1];
-
-    const lastLine = lines[lines.length - 1];
-
-    if (!prevLine) {
-      cleaned.push({ rawStart, rawEnd, text: subtitleText });
-      prevLine = subtitleText;
-      continue;
-    }
-
-    if (/<\d{2}:\d{2}:\d{2}\.\d{3}>/.test(lastLine) || /<\/?c[^>]*>/.test(lastLine)) {
-      cleaned.push({
-        rawStart,
-        rawEnd,
-        text: lastLine
-          .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
-          .replace(/<\/?c[^>]*>/g, '')
-          .trim(),
-      });
-      prevLine = subtitleText;
-      continue;
-    }
+    const subtitleText = lines.join(' ').replace(/\s+/g, ' ').trim();
+    const checkedText = lines.join(strBreak).replace(/\s+/g, ' ').trim();
 
     // Bỏ qua nếu lặp
     // if (!prevLine || prevLine.split(strBreak)[0] !== lines[0]) {
-    if (!prevLine.includes(subtitleText) && !subtitleText.includes(prevLine)) {
+    if (!prevLine || (!prevLine.includes(subtitleText) && !subtitleText.includes(prevLine))) {
+      // lấy start / end thô để xử lý sau
+      const parts = timeLine.split('-->').map(p => p.trim());
+      const rawStart = parts[0];
+      const rawEnd = parts[1];
       cleaned.push({ rawStart, rawEnd, text: subtitleText });
       prevLine = subtitleText;
     }
-
-    cleaned[cleaned.length - 1].rawEnd = rawEnd;
   }
 
   console.log('🚀 ~ cleanSrt ~ cleaned:', cleaned);
@@ -89,14 +62,14 @@ function cleanSrt(vttPath) {
   const srt = cleaned
     .map((b, i, arr) => {
       // start: nếu i === 0 thì lấy rawStart, else lấy rawEnd của phần tử trước
-      // const startRaw = i === 0 ? b.rawStart : arr[i - 1].rawEnd;
-      // const endRaw = b.rawEnd;
+      const startRaw = i === 0 ? b.rawStart : arr[i - 1].rawEnd;
+      const endRaw = b.rawEnd;
 
       // Normalize: đổi dấu chấm thành dấu phẩy cho phần giây.milliseconds
       const normalize = t => t.replace(/\./g, ',');
 
-      const start = normalize(b.rawStart);
-      const end = normalize(b.rawEnd);
+      const start = normalize(startRaw);
+      const end = normalize(endRaw);
 
       return `${i + 1}\n${start} --> ${end}\n${b.text}\n`;
     })
