@@ -7,7 +7,7 @@ const DOWNLOADS_DIR = path.join(__dirname, '..', 'downloads');
 
 function cleanSrt(vttPath) {
   console.log('🔄 Đang clean subtitle...');
-  let text = fs.readFileSync(vttPath, 'utf8');
+  let text = fs.readFileSync(vttPath, 'utf8').replace(/\r/g, '');
 
   // Bỏ header + timestamp + thẻ HTML
   text = text

@@ -116,7 +116,7 @@ async function main() {
   }
 
   if (action === 'cleanSrt') {
-    const { default: runCleanSrt } = await import('./contents/cleanSrt.js');
+    const { default: runCleanSrt } = await import('./contents/cleanSrt111.js');
     await runCleanSrt();
   }
 }
