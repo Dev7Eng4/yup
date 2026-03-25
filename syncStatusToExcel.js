@@ -12,14 +12,30 @@ async function main() {
     return;
   }
 
-  const files = fs.readdirSync(CHANNELS_DIR).filter(f => f.endsWith('_progress.json'));
+  function findProgressFiles(dir) {
+    let results = [];
+    if (!fs.existsSync(dir)) return results;
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        results = results.concat(findProgressFiles(fullPath));
+      } else if (item.endsWith('_progress.json')) {
+        results.push(fullPath);
+      }
+    }
+    return results;
+  }
+
+  const files = findProgressFiles(CHANNELS_DIR);
   if (files.length === 0) {
-    console.log('Không tìm thấy file _progress.json nào để đồng bộ.');
+    console.log('Không tìm thấy file _progress.json nào để đồng bộ trong thư mục channels hoặc thư mục con.');
     return;
   }
 
-  for (const file of files) {
-    const progressFile = path.join(CHANNELS_DIR, file);
+  for (const progressFile of files) {
+    const file = path.basename(progressFile);
     const excelFileExt = fs.existsSync(progressFile.replace('_progress.json', '.xlsx')) ? '.xlsx' : null;
     
     if (!excelFileExt) {
@@ -48,17 +64,31 @@ async function main() {
       const sheet = workbook.worksheets[0];
       
       const headerRow = sheet.getRow(1);
-      const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
-      const statusIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'status');
+      let videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
+      let statusIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'status');
+      let descIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'description');
+      let tagsIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'tags');
       
-      if (videoIdx >= 0 && statusIdx >= 0) {
+      if (videoIdx >= 0) {
+        let nextCol = Math.max(headerRow.values.length, sheet.columnCount + 1);
+        if (statusIdx < 0) { statusIdx = nextCol++; headerRow.getCell(statusIdx).value = 'STATUS'; }
+        if (descIdx < 0) { descIdx = nextCol++; headerRow.getCell(descIdx).value = 'Description'; }
+        if (tagsIdx < 0) { tagsIdx = nextCol++; headerRow.getCell(tagsIdx).value = 'Tags'; }
+
         let updatedCount = 0;
         for (let i = 2; i <= sheet.rowCount; i++) {
           const row = sheet.getRow(i);
           const rawUrl = row.getCell(videoIdx).value;
           const urlCell = rawUrl && typeof rawUrl === 'object' ? String(rawUrl.text || rawUrl.hyperlink || '').trim() : String(rawUrl || '').trim();
           if (progressData[urlCell]) {
-            row.getCell(statusIdx).value = progressData[urlCell];
+            const data = progressData[urlCell];
+            if (typeof data === 'string') {
+              row.getCell(statusIdx).value = data;
+            } else {
+              if (data.status) row.getCell(statusIdx).value = data.status;
+              if (data.description != null && descIdx > 0) row.getCell(descIdx).value = data.description;
+              if (data.tags != null && tagsIdx > 0) row.getCell(tagsIdx).value = data.tags;
+            }
             updatedCount++;
           }
         }
@@ -69,7 +99,7 @@ async function main() {
           console.log(`Không có trạng thái nào khớp để đồng bộ vào ${path.basename(excelFile)}`);
         }
       } else {
-        console.warn(`Không tìm thấy cột LINK VIDEO hoặc STATUS trong ${path.basename(excelFile)}`);
+        console.warn(`Không tìm thấy cột LINK VIDEO trong ${path.basename(excelFile)}`);
       }
       
       // Sau khi đồng bộ thành công thì xoá file progress

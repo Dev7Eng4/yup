@@ -626,10 +626,30 @@ async function main(options = {}) {
     const { downloadSingleVideo } = await import('../downloadVideo.js');
     const { default: makeOutro } = await import('./makeOutro.js');
     
-    const progressFile = inputFile ? inputFile.replace(/\.(xlsx|csv)$/, '_progress.json') : path.join(ROOT, 'channels', 'progress.json');
+    // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
+    const actualInputFile = inputFile || DATA_FILE_PATHS.find(p => fs.existsSync(p));
+    let destFolder = path.join(ROOT, 'channels');
+    if (actualInputFile) {
+      destFolder = path.dirname(actualInputFile);
+    }
+
+    const progressFile = actualInputFile ? actualInputFile.replace(/\.(xlsx|csv)$/, '_progress.json') : path.join(ROOT, 'channels', 'progress.json');
     let progressData = {};
     if (fs.existsSync(progressFile)) {
       try { progressData = JSON.parse(fs.readFileSync(progressFile, 'utf8')); } catch(e) {}
+    }
+
+    function sanitizeFilename(name) {
+      return String(name).replace(/[/\\?%*:|"<>]/g, '-').replace(/\s+/g, ' ').trim() || 'video_output';
+    }
+
+    // Luống bắt đầu batch -> Clean folder outputs
+    if (fs.existsSync(OUTPUT_DIR)) {
+      const outputFiles = fs.readdirSync(OUTPUT_DIR);
+      for (const f of outputFiles) {
+        try { fs.unlinkSync(path.join(OUTPUT_DIR, f)); } catch(e) {}
+      }
+      console.log('Đã dọn dẹp thư mục outputs/ trước khi chạy batch.');
     }
 
     for (let i = 0; i < items.length; i++) {
@@ -645,18 +665,72 @@ async function main(options = {}) {
           await processOne(background);
           console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
           
+          const audioPath = getAudioFile();
+          const baseName = path.basename(audioPath, path.extname(audioPath));
+          let finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg.mp4`); // Mặc định nếu không có outro
+          
           if (outroTime > 0) {
             console.log(`\n---> Gọi makeOutro.js cho ${url}`);
             try {
               await makeOutro({ outroSeconds: outroTime, outroFile: outroVideo, mode: 'batch' });
               console.log(`ĐÃ HOÀN THÀNH OUTRO: ${url}`);
+              
+              console.log(`\n---> Gọi ghép video chính + outro...`);
+              const { default: mergeOutroIntoVideo } = await import('./mergeOutroIntoVideo.js');
+
+              const fullF = `${baseName}-with-bg.mp4`;
+              const outroF = `${baseName}-outro.mp4`;
+
+              await mergeOutroIntoVideo({ mode: 'batch', fullFile: fullF, outroFile: outroF });
+              console.log(`ĐÃ MERGE OUTRO VÀO VIDEO CHÍNH.`);
+              
+              // mergeOutroIntoVideo trả ra: [tên-video-gốc]-merged.mp4
+              // vì fullFile là `${baseName}-with-bg.mp4` nên output là `${baseName}-with-bg-merged.mp4`
+              finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg-merged.mp4`);
             } catch (err) {
-              console.error('Lỗi tạo outro:', err.message);
+              console.error('Lỗi tạo/ghép outro:', err.message);
             }
           }
           
-          // Sau khi xong 1 video, append vào progress
-          progressData[url] = 'Đã tạo video';
+          // Copy / Move final video vào thư mục channels/{folder tên channel} với tên = title video
+          if (fs.existsSync(finalVideoPath)) {
+            const finalFilenameBase = sanitizeFilename(result.title);
+            const destPath = path.join(destFolder, finalFilenameBase + '.mp4');
+            fs.copyFileSync(finalVideoPath, destPath);
+            console.log(`\n>>> Đã xuất file video hoàn chỉnh: ${destPath}`);
+            
+            // Tìm và copy thumbnail từ thư mục downloads
+            if (fs.existsSync(DOWNLOADS_DIR)) {
+              const downloadFiles = fs.readdirSync(DOWNLOADS_DIR);
+              const thumbFile = downloadFiles.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+              if (thumbFile) {
+                const thumbExt = path.extname(thumbFile);
+                const thumbDestPath = path.join(destFolder, finalFilenameBase + thumbExt);
+                fs.copyFileSync(path.join(DOWNLOADS_DIR, thumbFile), thumbDestPath);
+                console.log(`>>> Đã copy thumbnail: ${thumbDestPath}`);
+              } else {
+                console.log(`>>> Không tìm thấy thumbnail bằng định dạng ảnh (.jpg/.webp...) trong downloads.`);
+              }
+            }
+          } else {
+            console.error(`\n>>> Lỗi: Không tìm thấy file video đầu ra ${finalVideoPath}`);
+          }
+          
+          // Xóa tất cả file trong outputs để xử lý video tiếp theo
+          if (fs.existsSync(OUTPUT_DIR)) {
+            const outputFiles = fs.readdirSync(OUTPUT_DIR);
+            for (const f of outputFiles) {
+              try { fs.unlinkSync(path.join(OUTPUT_DIR, f)); } catch(e) {}
+            }
+            console.log('Đã dọn dẹp outputs/ cẩn thận cho video tiếp theo.');
+          }
+          
+          // Sau khi xong 1 video, append vào progress, gồm cả description và tags
+          progressData[url] = {
+            status: 'Đã tạo video',
+            description: result.description || '',
+            tags: Array.isArray(result.tags) ? result.tags.join(', ') : (result.tags || '')
+          };
           fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
 
         } catch (err) {

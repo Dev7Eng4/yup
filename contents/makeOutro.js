@@ -35,7 +35,7 @@ const OUTRO_SUB_LINE_OUTLINE_COLORS = ['&H000000FF', '&H00D9F50A', '&H000000FF']
 function buildOutroColorStyleLines() {
   return OUTRO_SUB_LINE_OUTLINE_COLORS.map(
     (outlineCol, i) =>
-      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,1,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`
+      `Style: OutroC${i},Arial,${OUTRO_SUB_FONT_SIZE},&H00FFFFFF,&HFF000000,${outlineCol},&H80000000,1,0,0,0,100,100,0,0,1,2,0,7,0,0,0,1`,
   ).join('\n');
 }
 
@@ -125,7 +125,7 @@ function parseSrt(content) {
     if (/^\d+$/.test(lines[0].trim())) i = 1;
     const timeLine = lines[i];
     const m = timeLine.match(
-      /(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})/
+      /(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{1,2}:\d{2}[,.]\d{3})/,
     );
     if (!m) continue;
     const startMs = parseSrtTimeToMs(m[1]);
@@ -174,7 +174,7 @@ function parseSubtitleFile(filePath) {
  * Chỉ lấy cue có startTime nghiêm ngặt sau mốc (total - outro), vd. audio 10:22 + outro 20s
  * → mốc 10:02; cue 00:09:58 --> ... bị loại vì start < 10:02.
  * Mỗi dòng: bắt đầu đúng lúc xuất hiện (theo SRT), kết thúc = hết video (giữ đến cuối).
- * Vị trí: top-left, xếp dọc. 
+ * Vị trí: top-left, xếp dọc.
  * Từng cue một được đẩy lên thành 1 hàng với màu riêng biệt thay vì ghép nối lại.
  * Mỗi dòng dùng karaoke ASS (\\k) để lộ từng ký tự; chỉnh OUTRO_SUB_KARAOKE_CS để đổi tốc độ.
  */
@@ -197,11 +197,11 @@ function buildOutroAss(cues, totalMs, outroDurationMs) {
   const dialogues = [];
   let row = 0;
   let colorIndex = 0;
-  
+
   for (const c of inWindow) {
     const ns = Math.max(0, c.startMs - windowStartMs);
     if (ns >= outroDurationMs) continue;
-    
+
     const startStr = formatAssTime(ns);
     const mergedText = String(c.text).replace(/\r/g, '').replace(/\n/g, '').trim();
     if (!mergedText) continue;
@@ -272,7 +272,10 @@ function extractSrtTextFromWindow(cues, totalMs, outroDurationMs) {
  * Phân bổ đều thời gian cho các dòng text.
  */
 function buildOutroAssFromProcessedText(processedText, outroDurationMs) {
-  const lines = processedText.split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = processedText
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
   if (lines.length === 0) return null;
 
   const endStr = formatAssTime(outroDurationMs);
@@ -370,6 +373,7 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
 
   // Nếu chưa có outroSeconds, hỏi user
   if (!outroSeconds) {
+    const inquirer = (await import('inquirer')).default;
     const { inputSeconds } = await inquirer.prompt([
       {
         type: 'input',
@@ -397,21 +401,20 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
   }
 
   const subPath = getSubtitleFile();
+  let cues = [];
   if (!subPath) {
-    console.error('Không tìm thấy file .srt hoặc .vtt trong downloads/.');
-    return;
+    console.warn('Không tìm thấy file .srt hoặc .vtt trong downloads/. Sẽ tạo outro không có phụ đề.');
+  } else {
+    // === BƯỚC 1: Parse SRT và trích transcript trong window outro ===
+    cues = parseSubtitleFile(subPath);
   }
-
-  // === BƯỚC 1: Parse SRT và trích transcript trong window outro ===
-  const cues = parseSubtitleFile(subPath);
   const totalMs = Math.round(totalAudioSec * 1000);
   // Lọc ra các dòng chữ nằm trong window outro để log chơi
   const windowStartMs = Math.max(0, totalMs - outroMs);
   const inWindowCues = cues.filter(c => c.startMs > windowStartMs && c.startMs < totalMs);
 
   if (inWindowCues.length === 0) {
-    console.warn('Không có dòng phụ đề nào trong khoảng cuối.');
-    return;
+    console.warn('Không có dòng phụ đề nào trong khoảng cuối. Vẫn tiến hành tạo outro không chữ.');
   }
 
   console.log(`Đã trích ${inWindowCues.length} dòng sub nguyên gốc từ ${outroSec}s cuối.`);
@@ -430,7 +433,7 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
     assBody && assBody.includes('Dialogue:')
       ? assBody
       : `${assBody || ''}Dialogue: 0,0:00:00.00,0:00:00.10,Default,,0,0,0,,{\\an7\\pos(${OUTRO_SUB_LEFT},${OUTRO_SUB_TOP})}.\n`,
-    'utf-8'
+    'utf-8',
   );
 
   // === BƯỚC 4: Tạo video outro bằng ffmpeg (giữ nguyên logic cũ) ===
@@ -461,7 +464,7 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
         'medium',
         tempVideo,
       ],
-      { stdio: 'inherit', shell: false }
+      { stdio: 'inherit', shell: false },
     );
     if (r.status !== 0) throw new Error(`ffmpeg video outro thoát ${r.status}`);
   } else {
@@ -499,7 +502,7 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
   console.log(`Đang ghép outro (${outroSec}s, phụ đề từ Gemini)...`);
   execSync(
     `ffmpeg -y ${inputs} -filter_complex "${filterComplex}" -map "[vout]" -an -c:v libx264 -crf 28 -preset medium -t ${outroSec} "${outPath}"`,
-    { stdio: 'inherit' }
+    { stdio: 'inherit' },
   );
 
   fs.unlinkSync(tempSub);

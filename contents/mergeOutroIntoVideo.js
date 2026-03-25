@@ -20,7 +20,9 @@ function getDuration(filePath) {
   return parseFloat(result) || 0;
 }
 
-export default async function main() {
+export default async function main(options = {}) {
+  const { fullFile: fixedFull, outroFile: fixedOutro, mode = 'single' } = options;
+
   if (!fs.existsSync(OUTPUT_DIR)) {
     console.error('Không tìm thấy thư mục outputs/.');
     return;
@@ -30,37 +32,45 @@ export default async function main() {
   const outroFiles = allVideos.filter(f => /-outro\./i.test(f));
   const fullFiles = allVideos.filter(f => !/-outro\./i.test(f) && !/-merged\./i.test(f));
 
-  if (outroFiles.length === 0) {
+  if (!fixedOutro && outroFiles.length === 0) {
     console.error('Không tìm thấy video outro (*-outro.mp4) trong outputs/.');
     return;
   }
-  if (fullFiles.length === 0) {
+  if (!fixedFull && fullFiles.length === 0) {
     console.error('Không tìm thấy video full trong outputs/.');
     return;
   }
 
-  const inquirer = (await import('inquirer')).default;
-
-  let outroFile = outroFiles[0];
-  if (outroFiles.length > 1) {
-    const { picked } = await inquirer.prompt([{
-      type: 'list',
-      name: 'picked',
-      message: 'Chọn video outro:',
-      choices: outroFiles.map(f => ({ name: f, value: f })),
-    }]);
-    outroFile = picked;
+  let outroFile = fixedOutro || outroFiles[0];
+  if (!fixedOutro && outroFiles.length > 1) {
+    if (mode === 'batch') {
+      outroFile = outroFiles[0]; // Batch mode lấy mặc định file đầu tiên
+    } else {
+      const inquirer = (await import('inquirer')).default;
+      const { picked } = await inquirer.prompt([{
+        type: 'list',
+        name: 'picked',
+        message: 'Chọn video outro:',
+        choices: outroFiles.map(f => ({ name: f, value: f })),
+      }]);
+      outroFile = picked;
+    }
   }
 
-  let fullFile = fullFiles[0];
-  if (fullFiles.length > 1) {
-    const { picked } = await inquirer.prompt([{
-      type: 'list',
-      name: 'picked',
-      message: 'Chọn video full:',
-      choices: fullFiles.map(f => ({ name: f, value: f })),
-    }]);
-    fullFile = picked;
+  let fullFile = fixedFull || fullFiles[0];
+  if (!fixedFull && fullFiles.length > 1) {
+    if (mode === 'batch') {
+      fullFile = fullFiles[0]; // Batch mode lấy mặc định file đầu tiên
+    } else {
+      const inquirer = (await import('inquirer')).default;
+      const { picked } = await inquirer.prompt([{
+        type: 'list',
+        name: 'picked',
+        message: 'Chọn video full:',
+        choices: fullFiles.map(f => ({ name: f, value: f })),
+      }]);
+      fullFile = picked;
+    }
   }
 
   const outroPath = path.join(OUTPUT_DIR, outroFile);

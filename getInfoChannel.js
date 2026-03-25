@@ -73,7 +73,9 @@ async function getChannelInfo(url) {
           addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
         });
         entries = rawPlaylist.entries || [];
-        videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
+        videoLinks = entries
+          .filter(e => e.id && e.id.length === 11)
+          .map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
       } catch (err) {
         console.warn('Không lấy được danh sách video:', err.message);
       }
@@ -83,7 +85,9 @@ async function getChannelInfo(url) {
   // Nếu là playlist URL trực tiếp, dùng entries từ rawMeta
   if (entries.length === 0 && rawMeta.entries) {
     entries = rawMeta.entries;
-    videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
+    videoLinks = entries
+      .filter(e => e.id && e.id.length === 11)
+      .map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
   }
 
   return {
@@ -144,30 +148,58 @@ async function main() {
     const result = await getChannelInfo(url);
 
     // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
-    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'TITLE', 'DESCRIPTION', 'TAGS', 'BACKGROUND VIDEO', 'OUTRO VIDEO', 'OUTRO TIME', 'STATUS'];
+    const headers = [
+      'EMAIL',
+      'CHANNEL NAME',
+      'CHANNEL TAGS',
+      'LINK VIDEO',
+      'TITLE',
+      'DESCRIPTION',
+      'TAGS',
+      'BACKGROUND VIDEO',
+      'OUTRO VIDEO',
+      'OUTRO TIME',
+      'STATUS',
+    ];
     const videoLinks = [...(result.video_links || [])].reverse();
 
     const channelName = result.name || '';
     const channelTagsStr = (result.tags || []).join(', ');
     const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_') || 'output';
-    const outputExcelPath = path.join(DEFAULT_OUTPUT_DIR, `${safeChannelName}.xlsx`);
+    
+    let excelFilename = 'unknown_id';
+    const matchUrl = url.match(/@([a-zA-Z0-9_.-]+)/);
+    if (matchUrl) {
+      excelFilename = matchUrl[1];
+    } else if (result.metadata?.uploader_url && result.metadata.uploader_url.includes('@')) {
+      const m2 = result.metadata.uploader_url.match(/@([a-zA-Z0-9_.-]+)/);
+      if (m2) excelFilename = m2[1];
+    } else if (result.metadata?.uploader_id) {
+      excelFilename = result.metadata.uploader_id;
+      if (excelFilename.startsWith('@')) excelFilename = excelFilename.substring(1);
+    } else if (result.metadata?.channel_id || result.metadata?.id) {
+      excelFilename = result.metadata.channel_id || result.metadata.id;
+    }
+    
+    // Thư mục lưu kết quả: channels/<Tên Kênh>/
+    const channelDir = path.join(DEFAULT_OUTPUT_DIR, safeChannelName);
+    const outputExcelPath = path.join(channelDir, `${excelFilename}.xlsx`);
 
     if (fs.existsSync(outputExcelPath)) {
-      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${safeChannelName}.xlsx) BỎ QUA.\n`);
+      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${safeChannelName}/${excelFilename}.xlsx) BỎ QUA.\n`);
       return;
     }
 
     const rows =
       videoLinks.length > 0
         ? videoLinks.map((video, i) => {
-            const url = typeof video === 'string' ? video : (video?.url || '');
-            const title = typeof video === 'string' ? '' : (video?.title || '');
-            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, title, '', '', '', '', '', ''];
+            const url = typeof video === 'string' ? video : video?.url || '';
+            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', '', '', '', '', ''];
           })
         : [['', channelName, channelTagsStr, '(Không có video)', '', '', '', '', '', '', '']];
 
-    if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
-      fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
+    if (!fs.existsSync(channelDir)) {
+      fs.mkdirSync(channelDir, { recursive: true });
     }
 
     const workbook = new ExcelJS.Workbook();
@@ -177,9 +209,17 @@ async function main() {
 
     // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO (dài nhất) | TITLE | DESCRIPTION | TAGS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME | STATUS
     sheet.columns = [
-      { width: 25 }, { width: 28 }, { width: 35 }, { width: 65 }, { width: 50 },
-      { width: 50 }, { width: 30 }, { width: 22 }, { width: 22 },
-      { width: 15 }, { width: 22 }
+      { width: 25 },
+      { width: 28 },
+      { width: 20 },
+      { width: 50 },
+      { width: 50 },
+      { width: 50 },
+      { width: 30 },
+      { width: 22 },
+      { width: 22 },
+      { width: 15 },
+      { width: 22 },
     ];
 
     // Thêm dropdown cho cột Background Video (cột H)
