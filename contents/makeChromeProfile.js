@@ -120,4 +120,17 @@ if (isMain) {
   });
 }
 
+export function cleanupTempProfile() {
+  const TEMP_PROFILE_DIR = path.join(ROOT, 'temp-chrome-profile');
+  if (fs.existsSync(TEMP_PROFILE_DIR)) {
+    try {
+      // Dùng maxRetries để tránh lỗi file đang bị lock trên Windows
+      fs.rmSync(TEMP_PROFILE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
+      console.log('Đã xoá dọn dẹp thư mục temp-chrome-profile.');
+    } catch (err) {
+      console.warn('Cảnh báo không thể xoá temp-chrome-profile:', err.message);
+    }
+  }
+}
+
 export default getOrCreateProfile;
