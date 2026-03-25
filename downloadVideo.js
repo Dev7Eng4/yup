@@ -187,45 +187,22 @@ async function downloadTranscript(url, options = {}) {
       // Xử lý bằng Gemini cho file SRT vừa tạo
       const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
       if (fs.existsSync(srtPath)) {
+        const originalSrtPath = srtPath.replace(/\.srt$/i, '.original.srt');
+        fs.copyFileSync(srtPath, originalSrtPath);
+        console.log(`Đã lưu bản gốc SRT trước khi xử lý tại: ${path.basename(originalSrtPath)}`);
+
         const content = fs.readFileSync(srtPath, 'utf8');
-        const cues = content
-          .split(/\n\n+/)
-          .map(c => c.trim())
-          .filter(Boolean);
 
-        let finalSrt = '';
-        const CHUNK_SIZE = 100;
-
-        // Tạo mảng gồm các chunk
-        const chunks = [];
-        for (let i = 0; i < cues.length; i += CHUNK_SIZE) {
-          chunks.push(cues.slice(i, i + CHUNK_SIZE).join('\n\n'));
-        }
-
-        console.log(`Bắt đầu update nội dung SRT bằng Gemini (${chunks.length} phần) trong cùng một phiên xử lý...`);
+        console.log(`Bắt đầu update nội dung SRT bằng Gemini trong cùng một phiên xử lý...`);
+        let finalSrt = content; // Mặc định là gốc nếu có lỗi
 
         try {
-          // Trả về mảng kết quả tương ứng với mảng chunks truyền vào
-          const processedChunks = await updateContentWithGemini(chunks, {
-            mode: 'cleanSrt_first', // Hàm con sẽ tự động biết phần 2 trở đi là _next
+          finalSrt = await updateContentWithGemini(content, {
+            mode: 'cleanSrt_first',
             title: videoTitle,
           });
-
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            const processedChunk = processedChunks[i];
-
-            if (processedChunk && processedChunk.trim() !== '') {
-              finalSrt += processedChunk.trim() + '\n\n';
-            } else {
-              // Bị thiếu hoặc trả về trống → dùng bản gốc
-              finalSrt += chunk + '\n\n';
-            }
-          }
         } catch (err) {
           console.error('Lỗi khi xử lý hàng loạt qua Gemini:', err.message);
-          // Fallback nguyên bản
-          finalSrt = cues.join('\n\n') + '\n\n';
         }
 
         fs.writeFileSync(srtPath, finalSrt.trim() + '\n', 'utf-8');

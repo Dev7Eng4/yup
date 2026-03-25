@@ -303,8 +303,8 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
 /**
  * Đọc file Excel/CSV và lấy danh sách URL từ cột Video
  */
-async function readVideoUrlsFromFile() {
-  const filePath = DATA_FILE_PATHS.find(p => fs.existsSync(p));
+async function readVideoUrlsFromFile(inputFile = null) {
+  const filePath = inputFile || DATA_FILE_PATHS.find(p => fs.existsSync(p));
   if (!filePath) {
     throw new Error(`Không tìm thấy file output. Cần tạo từ "Lấy thông tin YouTube" trước.`);
   }
@@ -316,36 +316,52 @@ async function readVideoUrlsFromFile() {
     const sheet = workbook.worksheets[0];
     if (!sheet || sheet.rowCount < 2) throw new Error('File Excel không có dữ liệu.');
     const headerRow = sheet.getRow(1);
-    const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'video');
-    if (videoIdx < 0) throw new Error('Không tìm thấy cột Video.');
+    const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
+    if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO.');
     const trangThaiIdx = headerRow.values.findIndex(v =>
       String(v || '')
         .toLowerCase()
-        .includes('trạng thái'),
+        .includes('status'),
     );
-    const urls = [];
+    const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
+    const outroVideoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro video');
+    const outroTimeIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro time');
+    const items = [];
     for (let i = 2; i <= sheet.rowCount; i++) {
       const row = sheet.getRow(i);
       if (trangThaiIdx >= 0) {
         const trangThai = String(row.getCell(trangThaiIdx).value || '').trim();
         if (trangThai) continue;
       }
-      const val = String(row.getCell(videoIdx).value || '').trim();
+      const rawVal = row.getCell(videoIdx).value;
+      const val = rawVal && typeof rawVal === 'object' ? String(rawVal.text || rawVal.hyperlink || '').trim() : String(rawVal || '').trim();
+      const bgVal = bgIdx >= 0 ? String(row.getCell(bgIdx).value || '').trim() : 'cat';
+      const outroVideoStr = outroVideoIdx >= 0 ? String(row.getCell(outroVideoIdx).value || '').trim() : '';
+      const outroTimeStr = outroTimeIdx >= 0 ? String(row.getCell(outroTimeIdx).value || '').trim() : '';
+      const outroTimeNum = parseFloat(outroTimeStr) || 0;
       if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-        urls.push(val);
+        items.push({ 
+          url: val, 
+          background: bgVal || 'cat',
+          outroVideo: outroVideoStr,
+          outroTime: outroTimeNum > 0 ? outroTimeNum : 0
+        });
       }
     }
-    return urls;
+    return items;
   }
 
   const content = fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '');
   const lines = content.split('\n').filter(l => l.trim());
   if (lines.length < 2) throw new Error('File CSV không có dữ liệu.');
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  const videoIdx = headers.findIndex(h => h.toLowerCase() === 'video');
-  if (videoIdx < 0) throw new Error('Không tìm thấy cột Video trong CSV.');
-  const trangThaiIdx = headers.findIndex(h => h.toLowerCase().includes('trạng thái'));
-  const urls = [];
+  const videoIdx = headers.findIndex(h => h.toLowerCase() === 'link video');
+  if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO trong CSV.');
+  const trangThaiIdx = headers.findIndex(h => h.toLowerCase().includes('status'));
+  const bgIdx = headers.findIndex(h => h.toLowerCase() === 'background video');
+  const outroVideoIdx = headers.findIndex(h => h.toLowerCase() === 'outro video');
+  const outroTimeIdx = headers.findIndex(h => h.toLowerCase() === 'outro time');
+  const items = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
     if (trangThaiIdx >= 0) {
@@ -353,11 +369,20 @@ async function readVideoUrlsFromFile() {
       if (trangThai) continue;
     }
     const val = cells[videoIdx] || '';
+    const bgVal = bgIdx >= 0 ? (cells[bgIdx] || '').trim() : 'cat';
+    const outroVideoStr = outroVideoIdx >= 0 ? (cells[outroVideoIdx] || '').trim() : '';
+    const outroTimeStr = outroTimeIdx >= 0 ? (cells[outroTimeIdx] || '').trim() : '';
+    const outroTimeNum = parseFloat(outroTimeStr) || 0;
     if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-      urls.push(val);
+      items.push({ 
+        url: val, 
+        background: bgVal || 'cat',
+        outroVideo: outroVideoStr,
+        outroTime: outroTimeNum > 0 ? outroTimeNum : 0
+      });
     }
   }
-  return urls;
+  return items;
 }
 
 /**
@@ -445,8 +470,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 /**
  * Xử lý 1: tạo video từ audio có sẵn trong downloads
  */
-async function processOne(backgroundName) {
-  const backgroundsDir = path.join(ROOT, 'backgrounds', backgroundName);
+async function processOne(bgNameArg) {
+  let backgroundName = bgNameArg || 'cat';
+  let backgroundsDir = path.join(ROOT, 'backgrounds', backgroundName);
+
+  if (!fs.existsSync(backgroundsDir)) {
+    console.warn(`Không tìm thấy folder backgrounds/${backgroundName}/, sử dụng default là "cat"`);
+    backgroundName = 'cat';
+    backgroundsDir = path.join(ROOT, 'backgrounds', backgroundName);
+  }
 
   if (!fs.existsSync(DOWNLOADS_DIR)) {
     throw new Error('Không tìm thấy folder downloads/');
@@ -568,6 +600,7 @@ async function processOne(backgroundName) {
 async function main(options = {}) {
   const mode = options.mode || 'single';
   const backgroundName = options.background || 'cat';
+  const inputFile = options.inputFile || null;
 
   if (mode === 'single') {
     if (!fs.existsSync(DOWNLOADS_DIR)) {
@@ -584,28 +617,67 @@ async function main(options = {}) {
   }
 
   if (mode === 'batch') {
-    const urls = await readVideoUrlsFromFile();
-    if (urls.length === 0) {
-      throw new Error('Không có link video nào trong CSV.');
+    const items = await readVideoUrlsFromFile(inputFile);
+    if (items.length === 0) {
+      throw new Error('Không có link video nào trong CSV/Excel.');
     }
-    console.log(`Đọc được ${urls.length} link từ CSV. Bắt đầu xử lý tuần tự...\n`);
+    console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
     const { downloadSingleVideo } = await import('../downloadVideo.js');
+    const { default: makeOutro } = await import('./makeOutro.js');
+    
+    const progressFile = inputFile ? inputFile.replace(/\.(xlsx|csv)$/, '_progress.json') : path.join(ROOT, 'channels', 'progress.json');
+    let progressData = {};
+    if (fs.existsSync(progressFile)) {
+      try { progressData = JSON.parse(fs.readFileSync(progressFile, 'utf8')); } catch(e) {}
+    }
 
-    for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
-      console.log(`\n[${i + 1}/${urls.length}] ${url}`);
+    for (let i = 0; i < items.length; i++) {
+      const { url, background, outroVideo, outroTime } = items[i];
+      console.log(`\n[${i + 1}/${items.length}] ${url} (Background: ${background})`);
+      if (outroTime > 0) {
+        console.log(`\t> Sẽ tạo outro duration=${outroTime}s, video=${outroVideo || 'mặc định'}`);
+      }
+      
       const result = await downloadSingleVideo(url);
       if (result) {
         try {
-          await processOne(backgroundName);
-          console.log(`ĐÃ HOÀN THÀNH: ${url}`);
+          await processOne(background);
+          console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
+          
+          if (outroTime > 0) {
+            console.log(`\n---> Gọi makeOutro.js cho ${url}`);
+            try {
+              await makeOutro({ outroSeconds: outroTime, outroFile: outroVideo, mode: 'batch' });
+              console.log(`ĐÃ HOÀN THÀNH OUTRO: ${url}`);
+            } catch (err) {
+              console.error('Lỗi tạo outro:', err.message);
+            }
+          }
+          
+          // Sau khi xong 1 video, append vào progress
+          progressData[url] = 'Đã tạo video';
+          fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
+
         } catch (err) {
           console.error('Lỗi tạo video:', err.message);
         }
       }
     }
-    console.log(`\nHoàn thành xử lý ${urls.length} video.`);
+    console.log(`\nHoàn thành xử lý ${items.length} video.`);
+    
+    // Tự động gọi script đồng bộ bằng child_process
+    try {
+      console.log('\nĐang tự động đồng bộ trạng thái vào file Excel...');
+      const cp = await import('child_process');
+      const syncScript = path.join(ROOT, 'syncStatusToExcel.js');
+      if (fs.existsSync(syncScript)) {
+          cp.execSync(`node "${syncScript}"`, { stdio: 'inherit' });
+      }
+    } catch(e) {
+      console.error('Lỗi tự động đồng bộ:', e.message);
+    }
+    
     return;
   }
 

@@ -13,7 +13,6 @@ import ExcelJS from 'exceljs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, 'channels');
 const INPUT_FILE = path.join(__dirname, 'input.txt');
-const OUTPUT_EXCEL = path.join(DEFAULT_OUTPUT_DIR, 'output.xlsx');
 
 /** Options cho cột Trạng thái (dropdown) */
 const TRANG_THAI_OPTIONS = ['', 'Đã tạo video', 'Đã đăng video'];
@@ -74,7 +73,7 @@ async function getChannelInfo(url) {
           addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
         });
         entries = rawPlaylist.entries || [];
-        videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => e.url || `https://www.youtube.com/watch?v=${e.id}`);
+        videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
       } catch (err) {
         console.warn('Không lấy được danh sách video:', err.message);
       }
@@ -84,7 +83,7 @@ async function getChannelInfo(url) {
   // Nếu là playlist URL trực tiếp, dùng entries từ rawMeta
   if (entries.length === 0 && rawMeta.entries) {
     entries = rawMeta.entries;
-    videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => e.url || `https://www.youtube.com/watch?v=${e.id}`);
+    videoLinks = entries.filter(e => e.id && e.id.length === 11).map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
   }
 
   return {
@@ -145,14 +144,27 @@ async function main() {
     const result = await getChannelInfo(url);
 
     // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
-    const headers = ['EMAIL', 'TÊN KÊNH', 'VIDEO', 'TRẠNG THÁI'];
+    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'TITLE', 'DESCRIPTION', 'TAGS', 'BACKGROUND VIDEO', 'OUTRO VIDEO', 'OUTRO TIME', 'STATUS'];
     const videoLinks = [...(result.video_links || [])].reverse();
 
     const channelName = result.name || '';
+    const channelTagsStr = (result.tags || []).join(', ');
+    const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_') || 'output';
+    const outputExcelPath = path.join(DEFAULT_OUTPUT_DIR, `${safeChannelName}.xlsx`);
+
+    if (fs.existsSync(outputExcelPath)) {
+      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${safeChannelName}.xlsx) BỎ QUA.\n`);
+      return;
+    }
+
     const rows =
       videoLinks.length > 0
-        ? videoLinks.map((videoUrl, i) => ['', i === 0 ? channelName : '', videoUrl, ''])
-        : [['', channelName, '(Không có video)', '']];
+        ? videoLinks.map((video, i) => {
+            const url = typeof video === 'string' ? video : (video?.url || '');
+            const title = typeof video === 'string' ? '' : (video?.title || '');
+            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, title, '', '', '', '', '', ''];
+          })
+        : [['', channelName, channelTagsStr, '(Không có video)', '', '', '', '', '', '', '']];
 
     if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
       fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
@@ -163,22 +175,43 @@ async function main() {
     sheet.addRow(headers);
     rows.forEach(row => sheet.addRow(row));
 
-    // Độ rộng cột: email | Tên kênh | Video (dài nhất) | Trạng thái
-    sheet.columns = [{ width: 25 }, { width: 28 }, { width: 65 }, { width: 22 }];
+    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO (dài nhất) | TITLE | DESCRIPTION | TAGS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME | STATUS
+    sheet.columns = [
+      { width: 25 }, { width: 28 }, { width: 35 }, { width: 65 }, { width: 50 },
+      { width: 50 }, { width: 30 }, { width: 22 }, { width: 22 },
+      { width: 15 }, { width: 22 }
+    ];
 
-    // Thêm dropdown cho cột Trạng thái (cột D): "" | "Đã tạo video" | "Đã đăng video"
+    // Thêm dropdown cho cột Background Video (cột H)
+    const backgroundsDir = path.join(__dirname, 'backgrounds');
+    let bgOptions = [];
+    if (fs.existsSync(backgroundsDir)) {
+      bgOptions = fs.readdirSync(backgroundsDir).filter(f => fs.statSync(path.join(backgroundsDir, f)).isDirectory());
+    }
+    if (bgOptions.length > 0) {
+      const bgFormula = `"${bgOptions.join(',')}"`;
+      for (let i = 2; i <= sheet.rowCount; i++) {
+        sheet.getCell(`H${i}`).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: [bgFormula],
+        };
+      }
+    }
+
+    // Thêm dropdown cho cột STATUS (cột K): "" | "Đã tạo video" | "Đã đăng video"
     const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
     for (let i = 2; i <= sheet.rowCount; i++) {
-      sheet.getCell(`D${i}`).dataValidation = {
+      sheet.getCell(`K${i}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [listFormula],
       };
     }
 
-    await workbook.xlsx.writeFile(OUTPUT_EXCEL);
+    await workbook.xlsx.writeFile(outputExcelPath);
 
-    console.log(`\nĐã lưu kết quả vào ${path.basename(OUTPUT_EXCEL)} (${rows.length} video)`);
+    console.log(`\nĐã lưu kết quả vào ${path.basename(outputExcelPath)} (${rows.length} video)`);
   } catch (err) {
     console.error('Lỗi:', err.message);
     if (err.stderr) console.error('Chi tiết:', err.stderr);

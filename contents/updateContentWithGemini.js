@@ -1,23 +1,37 @@
 /**
  * Gửi nội dung SRT tới Gemini qua Playwright, nhận kết quả text đã xử lý.
- * Dùng Chrome profile persistent (từ makeChromeProfile) để giữ session Google login.
+ * KẾT HỢP TUẦN TỰ (dưới 30 phút) VÀ SONG SONG (trên 30 phút).
  */
 
 import { getOrCreateProfile } from './makeChromeProfile.js';
-import { checkFirstParagraph, checkLastParagraph } from '../promts/checkTextContent.js';
+import { checkContentSrt, checkFirstParagraph, checkLastParagraph } from '../promts/checkTextContent.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
+const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
 
 /**
- * Đợi cho đến khi Gemini trả lời xong (không còn loading/streaming).
+ * Láy thời lượng video (tính bằng phút) dựa vào dòng cue SRT cuối cùng
  */
+function getSrtDurationInMinutes(cuesArray) {
+  if (!cuesArray || cuesArray.length === 0) return 0;
+  const lastCue = cuesArray[cuesArray.length - 1];
+  const match = lastCue.match(/(\d{2}):(\d{2}):(\d{2})[.,](\d{3})/g);
+  if (match && match.length > 0) {
+    const timeStr = match[match.length - 1]; // ending time
+    const parts = timeStr.split(/[:,.]/);
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    const seconds = parseInt(parts[2], 10);
+    return hours * 60 + minutes + seconds / 60;
+  }
+  return 0; // fallback nếu parse lỗi
+}
+
 async function waitForGeminiResponse(page, timeoutMs = 120000) {
-  // Đợi response container xuất hiện
   await page.waitForSelector('.model-response-text, .response-content, message-content', {
     timeout: timeoutMs,
   });
 
-  // Đợi cho đến khi streaming xong (nút Stop biến mất)
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
     const isStreaming = await page.evaluate(() => {
@@ -31,122 +45,236 @@ async function waitForGeminiResponse(page, timeoutMs = 120000) {
     if (!isStreaming) break;
     await page.waitForTimeout(1000);
   }
-
-  // Chờ thêm 2 giây để chắc chắn response hoàn tất
   await page.waitForTimeout(2000);
 }
 
-/**
- * Lấy text kết quả từ response của Gemini.
- * Nếu là cleanSrt_*, lấy từ block <code> chứa định dạng markdown.
- * Còn lại thì lấy sau text "Kết quả bạn mong muốn:".
- */
 async function extractGeminiResponse(page) {
-  // Đợi thêm 1 chút để DOM render xong hoàn toàn phần text
   await page.waitForTimeout(1500);
 
   return page.evaluate(() => {
-    // 1. Tìm tất cả các response block
     const responses = Array.from(
       document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'),
     );
     if (responses.length === 0) return '';
-
-    // Lấy node DOM của response cuối cùng (gần nhất)
     const lastResponse = responses[responses.length - 1];
 
-    // Trích xuất kết quả từ Markdown Code block (áp dụng mặc định)
-    // Tìm thẻ code có data-test-id="code-content"
     const codeBlocks = lastResponse.querySelectorAll('code[data-test-id="code-content"]');
     if (codeBlocks.length > 0) {
       return (codeBlocks[codeBlocks.length - 1].innerText || codeBlocks[codeBlocks.length - 1].textContent || '').trim();
     }
-
-    // Fallback lấy bất kỳ block code nào
     const anyCode = lastResponse.querySelectorAll('code');
     if (anyCode.length > 0) {
       return (anyCode[anyCode.length - 1].innerText || anyCode[anyCode.length - 1].textContent || '').trim();
     }
-
-    // Fallback vét cạn nếu không có thẻ code nào
     return (lastResponse.innerText || lastResponse.textContent || '').trim();
   });
 }
 
 /**
- * Gửi prompt tới Gemini và nhận kết quả. Cùng 1 phiên duyệt web nếu truyền vào mảng.
- * Dùng Playwright với Chrome profile persistent (đã đăng nhập Google trước).
- * @param {string|string[]} textOrChunks - Nội dung text (hoặc mảng các chunk) cần xử lý
- * @param {object} options - Tùy chọn truyền vào (mode, title, part...)
- * @returns {Promise<string|string[]>} Text đã được Gemini xử lý (cùng định dạng input)
+ * Gửi prompt lên giao diện chat hiện tại trên page và trả về kết quả 
  */
-export async function updateContentWithGemini(textOrChunks, options = {}) {
-  const isArray = Array.isArray(textOrChunks);
-  const chunks = isArray ? textOrChunks : [textOrChunks];
+async function sendPromptToPage(page, prompt, label) {
+  const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
+  await page.waitForSelector(inputSelector, { timeout: 15000 });
+
+  const inputEl = await page.$(inputSelector);
+  const inputBbox = await inputEl.boundingBox();
+  if (inputBbox) {
+    await page.mouse.move(inputBbox.x + inputBbox.width / 2, inputBbox.y + inputBbox.height / 2, { steps: 10 });
+    await page.waitForTimeout(100);
+    await page.mouse.down();
+    await page.waitForTimeout(50);
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(500);
+
+  await page.keyboard.down('Control');
+  await page.keyboard.press('A');
+  await page.keyboard.up('Control');
+  await page.waitForTimeout(100);
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+
+  await page.keyboard.insertText(prompt);
+  await page.waitForTimeout(1000);
+
+  const sendBtnSelector = 'button.send-button, button[aria-label="Send message"], button[data-mat-icon-name="send"]';
+  await page.waitForSelector(sendBtnSelector, { timeout: 5000 });
+  const sendEl = await page.$(sendBtnSelector);
+  const sendBbox = await sendEl.boundingBox();
+  if (sendBbox) {
+    await page.mouse.move(sendBbox.x + sendBbox.width / 2, sendBbox.y + sendBbox.height / 2, { steps: 10 });
+    await page.waitForTimeout(100);
+    await page.mouse.down();
+    await page.waitForTimeout(50);
+    await page.mouse.up();
+  }
+
+  console.log(`Đã gửi ${label}, đang đợi Gemini xử lý...`);
+  await waitForGeminiResponse(page, 150000);
+
+  const result = await extractGeminiResponse(page);
+  console.log(`Đã nhận kết quả từ Gemini cho ${label}.`);
+  return result;
+}
+
+/**
+ * Xử lý 1 đoạn chunk trên 1 trang Playwright riêng biệt.
+ * (Dùng cho cơ chế đa tab đồng thời)
+ */
+async function processChunkOnPage(page, chunk, index, totalChunks) {
+  const prompt = checkContentSrt(chunk);
+  console.log(`\n--- Đang mở Gemini và gửi prompt phần ${index + 1}/${totalChunks} ---`);
+
+  // Mở trang Gemini thẳng luôn trên tab được giao
+  await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  
+  const result = await sendPromptToPage(page, prompt, `phần ${index + 1}/${totalChunks}`);
+  return { index, result };
+}
+
+/**
+ * Gửi prompt tới Gemini và nhận kết quả.
+ * Áp dụng logic kép: Tuần tự cho <30 phút và Song song 5 tab cho >=30 phút.
+ */
+export async function updateContentWithGemini(rawSrtContent, options = {}) {
   const { mode = 'outro', title = '' } = options;
 
+  // Tách chunk từ file srt gốc
+  const cues = typeof rawSrtContent === 'string' 
+    ? rawSrtContent.split(/\n\n+/).map(c => c.trim()).filter(Boolean)
+    : rawSrtContent; 
+
+  // Tính toán thời lượng video dự kiến bằng dòng mốc thời gian của cục srt cuối cùng
+  const durationMin = getSrtDurationInMinutes(cues);
+  console.log(`Độ dài video check được qua SRT cuối: ~${durationMin.toFixed(1)} phút`);
+
+  const CHUNK_SIZE = 100;
+  const chunks = [];
+  for (let i = 0; i < cues.length; i += CHUNK_SIZE) {
+    chunks.push(cues.slice(i, i + CHUNK_SIZE).join('\n\n'));
+  }
+
+  const totalChunks = chunks.length;
+
   console.log('Đang mở Chrome với profile đã lưu...');
-  const { context, page } = await getOrCreateProfile({ visible: true });
+  const { context, page: initialPage } = await getOrCreateProfile({ visible: true });
 
   try {
-    // Mở Gemini trong tab hiện tại (không dùng networkidle vì giao thức SSE keep-alive sẽ treo load)
-    await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    console.log(`Đã mở Gemini, bắt đầu xử lý ${chunks.length} phần...`);
+    const finalResults = new Array(totalChunks).fill(null);
 
-    const results = [];
+    // KỊCH BẢN 1: VIDEO DƯỚI 30 PHÚT -> DÙNG CHUNG 1 TAB THEO KIỂU NỐI TIẾP CHAP
+    if (durationMin < 30) {
+      console.log(`Video < 30 phút, Xử lý TUẦN TỰ nối tiếp hội thoại trên 1 tab duy nhất...`);
+      await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-    for (let currentPart = 1; currentPart <= chunks.length; currentPart++) {
-      const chunk = chunks[currentPart - 1];
-      let currentMode = currentPart === 1 ? 'cleanSrt_first' : 'cleanSrt_next';
-      let prompt = currentPart === 1 ? checkFirstParagraph(title, chunk) : checkLastParagraph(title, chunk, currentPart);
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = chunks[i];
+        let prompt = i === 0 
+          ? checkFirstParagraph(title, chunk) 
+          : checkLastParagraph(title, chunk);
 
-      console.log(`\n--- Đang gửi prompt phần ${currentPart}/${chunks.length} (mode: ${currentMode}) ---`);
+        console.log(`\n--- Đang gửi tuần tự prompt phần ${i + 1}/${totalChunks} ---`);
+        const result = await sendPromptToPage(initialPage, prompt, `phần ${i + 1}/${totalChunks}`);
+        finalResults[i] = result;
 
-      // Đợi textarea/input xuất hiện
-      const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
-      await page.waitForSelector(inputSelector, { timeout: 15000 });
-
-      // Focus vào input
-      await page.click(inputSelector);
-      await page.waitForTimeout(500);
-
-      // Paste nội dung prompt (đồng thời xoá nội dung cũ nếu còn sót lại)
-      await page.evaluate(textToPaste => {
-        const editor = document.querySelector('div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor');
-        if (editor) {
-          editor.focus();
-          document.execCommand('selectAll', false, null); // Chọn toàn bộ text cũ
-          document.execCommand('insertText', false, textToPaste); // Ghi đè text mới (kích hoạt event input của giao diện)
+        if (i < totalChunks - 1) {
+          await initialPage.waitForTimeout(2000); // nghỉ nhẹ trước khi gửi phần tiếp theo
         }
-      }, prompt);
+      }
+    } 
 
-      await page.waitForTimeout(1000);
+    // KỊCH BẢN 2: VIDEO TỪ 30 PHÚT TRỞ LÊN -> CHẠY LÔ BATCH PROMISE.ALL TỐI ĐA 5 TAB NHƯ CŨ
+    else {
+      const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
+      console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
+      
+      const pages = [initialPage];
+      for (let i = 1; i < activeConcurrency; i++) {
+        pages.push(await context.newPage());
+      }
 
-      // Nhấn nút gửi
-      const sendBtnSelector = 'button.send-button, button[aria-label="Send message"], button[data-mat-icon-name="send"]';
-      await page.waitForSelector(sendBtnSelector, { timeout: 5000 });
-      await page.click(sendBtnSelector);
+      for (let batchStart = 0; batchStart < totalChunks; batchStart += activeConcurrency) {
+        const batchPromises = [];
+        const batchEnd = Math.min(batchStart + activeConcurrency, totalChunks);
 
-      console.log(`Đã gửi phần ${currentPart}, đang đợi Gemini xử lý...`);
+        console.log(`\n=== Mở lô xử lý trực tuyến: từ phần ${batchStart + 1} đến ${batchEnd} / ${totalChunks} ===`);
 
-      // Đợi response
-      await waitForGeminiResponse(page, 150000);
+        for (let i = batchStart; i < batchEnd; i++) {
+          const pageIndex = i - batchStart;
+          const page = pages[pageIndex];
+          const chunk = chunks[i];
 
-      // Lấy kết quả
-      const result = await extractGeminiResponse(page);
-      console.log(`Đã nhận kết quả từ Gemini cho phần ${currentPart}.`);
+          // Đẩy promise vào mảng chờ thực thi đồng thời
+          batchPromises.push(processChunkOnPage(page, chunk, i, totalChunks));
+        }
 
-      results.push(result);
+        // Thực thi đồng thời tiến trình Promise All
+        const batchResults = await Promise.all(batchPromises);
 
-      // Chờ thêm một nhịp nhẹ trước khi gửi prompt tiếp theo
-      if (currentPart < chunks.length) {
-        await page.waitForTimeout(2000);
+        for (const res of batchResults) {
+          finalResults[res.index] = res.result;
+        }
+
+        console.log(`=== Đã xong lô ${batchStart + 1} đến ${batchEnd}! ===`);
+        if (batchEnd < totalChunks) {
+          console.log(`Vẫn còn đoạn cần xử lý, tiếp tục phân lô để chờ...`);
+          // Bạn có thể chèn lại timeout 10s tại đây nếu cần
+          // await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+      }
+
+      // Đóng bớt tab phụ
+      for (let i = 1; i < pages.length; i++) {
+        await pages[i].close();
       }
     }
 
-    return isArray ? results : results[0];
+    // MAP THỜI GIAN THEO LÍP KIỂM TRA CHẶT CHẼ
+    let finalSrt = '';
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const processedChunk = finalResults[i];
+
+      if (processedChunk && processedChunk.trim() !== '') {
+        const origBlocks = chunk.split(/\n\n+/).map(b => b.trim()).filter(Boolean);
+        let procBlocks = processedChunk.replace(/```(srt)?/gi, '').split(/\n\n+/).map(b => b.trim()).filter(Boolean);
+        
+        const procMap = {};
+        for (const pb of procBlocks) {
+          const lines = pb.split('\n');
+          const index = parseInt(lines[0].trim(), 10);
+          if (!isNaN(index) && lines.length >= 3) {
+            procMap[index] = lines.slice(2).join('\n');
+          }
+        }
+
+        const mergedBlocks = [];
+        const missingIds = [];
+        for (const ob of origBlocks) {
+          const lines = ob.split('\n');
+          const index = parseInt(lines[0].trim(), 10);
+          if (!isNaN(index) && lines.length >= 3) {
+            if (procMap[index]) {
+              lines.splice(2, lines.length - 2, procMap[index]);
+            } else {
+              missingIds.push(index);
+            }
+          }
+          mergedBlocks.push(lines.join('\n'));
+        }
+        if (missingIds.length > 0) {
+          console.warn(`\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(', ')}`);
+        }
+        finalSrt += mergedBlocks.join('\n\n') + '\n\n';
+      } else {
+        // Bị thiếu hoặc trả về trống → dùng bản gốc
+        finalSrt += chunk + '\n\n';
+      }
+    }
+
+    return finalSrt.trim();
   } finally {
-    // Đóng context (giữ lại profile trên ổ đĩa)
     await context.close();
   }
 }

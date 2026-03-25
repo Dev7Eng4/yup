@@ -329,7 +329,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   return header + dialogues.join('\n');
 }
 
-export default async function main({ outroSeconds } = {}) {
+export default async function main({ outroSeconds, outroFile, mode = 'single' } = {}) {
   if (!fs.existsSync(DOWNLOADS_DIR)) {
     console.error('Không có thư mục downloads/.');
     return;
@@ -341,19 +341,32 @@ export default async function main({ outroSeconds } = {}) {
 
   const bgFiles = fs.readdirSync(OUTRO_BG_DIR).filter(f => /\.(mp4|mov|mkv|webm)$/i.test(f));
   if (bgFiles.length === 0) {
-    console.error('Không có file video trong backgrounds/outro/');
+    console.error('Không có file video trong backgrounds/outro/, bỏ qua tạo outro.');
     return;
   }
 
-  const inquirer = (await import('inquirer')).default;
-  const { outroFile } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'outroFile',
-      message: 'Chọn video nền outro:',
-      choices: bgFiles.map(f => ({ name: f, value: f })),
-    },
-  ]);
+  if (outroFile) {
+    if (!bgFiles.includes(outroFile)) {
+      console.warn(`Không tìm thấy file "${outroFile}" trong backgrounds/outro/. Dùng video đầu tiên: ${bgFiles[0]}`);
+      outroFile = bgFiles[0];
+    }
+  } else {
+    if (mode === 'batch') {
+      console.warn(`Không chọn video nền outro ở cột Excel, tự động nhận video đầu tiên: ${bgFiles[0]}`);
+      outroFile = bgFiles[0];
+    } else {
+      const inquirer = (await import('inquirer')).default;
+      const result = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'outroFile',
+          message: 'Chọn video nền outro:',
+          choices: bgFiles.map(f => ({ name: f, value: f })),
+        },
+      ]);
+      outroFile = result.outroFile;
+    }
+  }
 
   // Nếu chưa có outroSeconds, hỏi user
   if (!outroSeconds) {

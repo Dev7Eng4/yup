@@ -14,7 +14,7 @@ function cleanSrt(vttPath) {
     .replace(/^WEBVTT[\s\S]*?\n\n/, '')
     .replace(/align:start position:\d+%/g, '')
     .replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '')
-    // .replace(/<\/?c[^>]*>/g, '')
+    .replace(/<\/?c[^>]*>/g, '')
     .replace(/\[.*?\]/g, '') // bỏ [nhạc], [vỗ tay] v.v.
     .replace(/&[a-z]+;/g, '')
     .trim();
@@ -25,48 +25,52 @@ function cleanSrt(vttPath) {
     .map(b => b.trim())
     .filter(Boolean);
 
-  const cleaned = blocks
-    .map(block => {
-      const [timeLine, ...lines] = block
-        .split('\n')
-        .map(l => l.trim())
-        .filter(Boolean);
+  const cleaned = [];
+  let prevLine = '';
+  const strBreak = '<break>';
 
-      const textContent = lines.join(' ');
+  for (const block of blocks) {
+    // Tách timestamp + text
+    const [timeLine, ...lines] = block
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+    if (!timeLine || !timeLine.includes('-->')) continue;
 
-      if (!timeLine || !timeLine.includes('-->') || !textContent.trim()) return null;
+    const subtitleText = lines.join(' ').replace(/\s+/g, ' ').trim();
+    const checkedText = lines.join(strBreak).replace(/\s+/g, ' ').trim();
 
+    // Bỏ qua nếu lặp
+    // if (!prevLine || prevLine.split(strBreak)[0] !== lines[0]) {
+    if (!prevLine || (!prevLine.includes(subtitleText) && !subtitleText.includes(prevLine))) {
+      // lấy start / end thô để xử lý sau
       const parts = timeLine.split('-->').map(p => p.trim());
       const rawStart = parts[0];
       const rawEnd = parts[1];
+      cleaned.push({ rawStart, rawEnd, text: subtitleText });
+      prevLine = subtitleText;
+    }
+  }
 
-      if (block.includes('<c>')) {
-        return { rawStart, rawEnd, isTimeLine: true };
-      }
-
-      return { rawStart: rawStart, rawEnd: rawEnd, text: textContent };
-    })
-    .filter(Boolean);
-
+  // Tạo nội dung SRT hợp lệ với logic:
+  // item[0].start = item[0].rawStart
+  // item[i].start = prev.rawEnd (end của item trước)
+  // item[i].end = item[i].rawEnd
   const srt = cleaned
-    .reduce((acc, curr, index, prevArr) => {
+    .map((b, i, arr) => {
+      // start: nếu i === 0 thì lấy rawStart, else lấy rawEnd của phần tử trước
+      const startRaw = i === 0 ? b.rawStart : arr[i - 1].rawEnd;
+      const endRaw = b.rawEnd;
+
+      // Normalize: đổi dấu chấm thành dấu phẩy cho phần giây.milliseconds
       const normalize = t => t.replace(/\./g, ',');
 
-      if (curr?.isTimeLine) {
-        const nextItem = prevArr[index + 1];
+      const start = normalize(startRaw);
+      const end = normalize(endRaw);
 
-        if (!nextItem || nextItem.isTimeLine) return acc;
-        return [...acc, `${acc.length + 1}\n${normalize(curr.rawStart)} --> ${normalize(nextItem.rawEnd)}\n${nextItem.text}\n`];
-      }
-
-      const prevItem = prevArr[index - 1];
-
-      if (prevItem && prevItem.isTimeLine) return acc;
-
-      return [...acc, `${acc.length + 1}\n${normalize(curr.rawStart)} --> ${normalize(curr.rawEnd)}\n${curr.text}\n`];
-    }, [])
+      return `${i + 1}\n${start} --> ${end}\n${b.text}\n`;
+    })
     .join('\n');
-  console.log('🚀 ~ cleanSrt ~ srt:', srt);
 
   const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
   fs.writeFileSync(srtPath, srt, 'utf-8');
