@@ -7,3 +7,4 @@ venv
 backgrounds/dog
 backgrounds/outro
 .puppeteer-profile
+temp-chrome-profile

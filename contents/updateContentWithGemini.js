@@ -3,7 +3,7 @@
  * Dùng Chrome profile persistent (từ makeChromeProfile) để giữ session Google login.
  */
 
-import { getOrCreateProfile, cleanupTempProfile } from './makeChromeProfile.js';
+import { getOrCreateProfile } from './makeChromeProfile.js';
 import { checkFirstParagraph, checkLastParagraph } from '../promts/checkTextContent.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -148,7 +148,6 @@ export async function updateContentWithGemini(textOrChunks, options = {}) {
   } finally {
     // Đóng context (giữ lại profile trên ổ đĩa)
     await context.close();
-    cleanupTempProfile();
   }
 }
 

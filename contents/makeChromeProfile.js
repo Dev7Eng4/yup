@@ -28,16 +28,10 @@ const PROFILE_DIR = path.join(ROOT, 'chrome-profile');
  * @returns {Promise<{context: import('playwright').BrowserContext, page: import('playwright').Page}>}
  */
 export async function getOrCreateProfile(options = {}) {
-  const {
-    headless = false,
-    windowPosition,
-    visible = true,
-  } = options;
+  const { headless = false, windowPosition, visible = true } = options;
 
-  const args = [
-    '--no-sandbox',
-    '--disable-blink-features=AutomationControlled',
-  ];
+  // const args = ['--no-sandbox', '--disable-blink-features=AutomationControlled', '--window-size=880,900'];
+  const args = ['--no-sandbox', '--disable-blink-features=AutomationControlled'];
 
   // Nếu không visible → đẩy cửa sổ ra ngoài màn hình
   if (!visible) {
@@ -66,17 +60,15 @@ export async function getOrCreateProfile(options = {}) {
   }
 
   const context = await chromium.launchPersistentContext(activeProfileDir, {
-    channel: 'chrome',        // Dùng Chrome thật (đã cài trên máy)
+    channel: 'chrome', // Dùng Chrome thật (đã cài trên máy)
     headless,
     args,
-    viewport: null,           // Để Chrome tự căn chỉnh kích thước
-    ignoreDefaultArgs: ['--enable-automation'],  // Bỏ flag automation
+    viewport: null, // Để Chrome tự căn chỉnh kích thước
+    ignoreDefaultArgs: ['--enable-automation'], // Bỏ flag automation
   });
 
   // Lấy page có sẵn hoặc tạo mới
-  const page = context.pages().length > 0
-    ? context.pages()[0]
-    : await context.newPage();
+  const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
 
   return { context, page };
 }
