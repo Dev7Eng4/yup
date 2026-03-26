@@ -12,10 +12,10 @@ temp-chrome-profile
 chrome-profile
 
 # Ignore toàn bộ trong channel
-channel/
+channels/
 # Không ignore các folder con (để Git còn duyệt vào bên trong)
-!channel/*
+!channels/*
 # Ignore tất cả bên trong các folder con
-channel/*/
+channels/*/
 # Nhưng cho phép file .xlsx
-!channel/*/*.xlsx
+!channels/*/*.xlsx
