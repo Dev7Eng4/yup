@@ -187,9 +187,9 @@ async function downloadTranscript(url, options = {}) {
       // Xử lý bằng Gemini cho file SRT vừa tạo
       const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
       if (fs.existsSync(srtPath)) {
-        const originalSrtPath = srtPath.replace(/\.srt$/i, '.original.srt');
-        fs.copyFileSync(srtPath, originalSrtPath);
-        console.log(`Đã lưu bản gốc SRT trước khi xử lý tại: ${path.basename(originalSrtPath)}`);
+        // const originalSrtPath = srtPath.replace(/\.srt$/i, '.original.srt');
+        // fs.copyFileSync(srtPath, originalSrtPath);
+        // console.log(`Đã lưu bản gốc SRT trước khi xử lý tại: ${path.basename(originalSrtPath)}`);
 
         const content = fs.readFileSync(srtPath, 'utf8');
 
