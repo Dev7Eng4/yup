@@ -13,6 +13,11 @@ GIỮ NGUYÊN TIMESTAMPS: Tuyệt đối không thay đổi các mốc thời gi
 
 GIỮ NGUYÊN ĐỊNH DẠNG SRT: Đầu ra phải là định dạng SRT chuẩn, chỉ chứa tiếng Nhật đã được sửa. Không thêm bất kỳ lời giải thích nào.
 
+ĐỊNH DẠNG OUTPUT:
+- Toàn bộ kết quả phải nằm trong DUY NHẤT 1 code block.
+- Không có bất kỳ nội dung nào nằm ngoài code block.
+- Không thêm giải thích, không thêm ký tự thừa.
+
 Mục tiêu chính: Sửa đúng mặt chữ dựa trên ngữ cảnh toàn đoạn để nội dung chính xác với những gì người trong video đang nói.
 
 Nội dung cần xử lý:
