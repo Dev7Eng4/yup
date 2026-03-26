@@ -8,6 +8,7 @@ backgrounds/dog
 backgrounds/outro
 .puppeteer-profile
 temp-chrome-profile
+chrome-profile
 
 # Ignore toàn bộ trong channel
 channel/
