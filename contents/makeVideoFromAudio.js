@@ -19,8 +19,20 @@ const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
-/** Số lượng video stock lấy từ backgrounds (có thể tăng/giảm) */
-const STOCK_VIDEO_COUNT = 15;
+/** 
+ * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
+ * - < 25 phút: 15
+ * - 25 - 40 phút: 18
+ * - 40 - 60 phút: 21
+ * - >= 60 phút: 25
+ */
+function getDynamicStockVideoCount(audioDurationSec) {
+  const minutes = audioDurationSec / 60;
+  if (minutes < 25) return 15;
+  if (minutes < 40) return 18;
+  if (minutes < 60) return 21;
+  return 25;
+}
 
 /** Crossfade giữa các clip stock (giây): clip trước mờ dần, clip sau sáng dần */
 const STOCK_CROSSFADE_SEC = 1;
@@ -161,15 +173,15 @@ function shuffleArray(arr) {
 }
 
 /**
- * Lấy N video stock ngẫu nhiên từ thư mục background (N = STOCK_VIDEO_COUNT)
+ * Lấy N video stock ngẫu nhiên từ thư mục background
  */
-function getStockVideos(backgroundsDir) {
+function getStockVideos(backgroundsDir, count) {
   const files = fs.readdirSync(backgroundsDir).filter(f => /\.(mp4|mov|mkv|webm)$/i.test(f));
-  if (files.length < STOCK_VIDEO_COUNT) {
-    throw new Error(`Cần ít nhất ${STOCK_VIDEO_COUNT} video trong ${backgroundsDir}`);
+  if (files.length < count) {
+    throw new Error(`Cần ít nhất ${count} video trong ${backgroundsDir}`);
   }
   const shuffled = shuffleArray(files);
-  return shuffled.slice(0, STOCK_VIDEO_COUNT).map(f => path.join(backgroundsDir, f));
+  return shuffled.slice(0, count).map(f => path.join(backgroundsDir, f));
 }
 
 /**
@@ -493,7 +505,9 @@ async function processOne(bgNameArg) {
   }
 
   const audioPath = getAudioFile();
-  const videoPaths = getStockVideos(backgroundsDir);
+  const audioDurationSec = getDuration(audioPath);
+  const stockVideoCount = getDynamicStockVideoCount(audioDurationSec);
+  const videoPaths = getStockVideos(backgroundsDir, stockVideoCount);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
