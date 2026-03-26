@@ -66,14 +66,16 @@ async function main() {
       const headerRow = sheet.getRow(1);
       let videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
       let statusIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'status');
+      let titleIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'title');
       let descIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'description');
       let tagsIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'tags');
       
       if (videoIdx >= 0) {
         let nextCol = Math.max(headerRow.values.length, sheet.columnCount + 1);
         if (statusIdx < 0) { statusIdx = nextCol++; headerRow.getCell(statusIdx).value = 'STATUS'; }
-        if (descIdx < 0) { descIdx = nextCol++; headerRow.getCell(descIdx).value = 'Description'; }
-        if (tagsIdx < 0) { tagsIdx = nextCol++; headerRow.getCell(tagsIdx).value = 'Tags'; }
+        if (titleIdx < 0) { titleIdx = nextCol++; headerRow.getCell(titleIdx).value = 'TITLE'; }
+        if (descIdx < 0) { descIdx = nextCol++; headerRow.getCell(descIdx).value = 'DESCRIPTION'; }
+        if (tagsIdx < 0) { tagsIdx = nextCol++; headerRow.getCell(tagsIdx).value = 'TAGS'; }
 
         let updatedCount = 0;
         for (let i = 2; i <= sheet.rowCount; i++) {
@@ -86,6 +88,7 @@ async function main() {
               row.getCell(statusIdx).value = data;
             } else {
               if (data.status) row.getCell(statusIdx).value = data.status;
+              if (data.title != null && titleIdx > 0) row.getCell(titleIdx).value = data.title;
               if (data.description != null && descIdx > 0) row.getCell(descIdx).value = data.description;
               if (data.tags != null && tagsIdx > 0) row.getCell(tagsIdx).value = data.tags;
             }

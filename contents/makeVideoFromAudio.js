@@ -708,10 +708,13 @@ async function main(options = {}) {
             }
           }
 
-          // Copy / Move final video vào thư mục channels/{folder tên channel} với tên = title video
+          // Copy / Move final video vào thư mục channels/{folder tên channel}/videos với tên = title video
           if (fs.existsSync(finalVideoPath)) {
             const finalFilenameBase = sanitizeFilename(result.title);
-            const destPath = path.join(destFolder, finalFilenameBase + '.mp4');
+            const targetVideosDir = path.join(destFolder, 'videos');
+            if (!fs.existsSync(targetVideosDir)) fs.mkdirSync(targetVideosDir, { recursive: true });
+            
+            const destPath = path.join(targetVideosDir, finalFilenameBase + '.mp4');
             fs.copyFileSync(finalVideoPath, destPath);
             console.log(`\n>>> Đã xuất file video hoàn chỉnh: ${destPath}`);
 
@@ -721,7 +724,7 @@ async function main(options = {}) {
               const thumbFile = downloadFiles.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
               if (thumbFile) {
                 const thumbExt = path.extname(thumbFile);
-                const thumbDestPath = path.join(destFolder, finalFilenameBase + thumbExt);
+                const thumbDestPath = path.join(targetVideosDir, finalFilenameBase + thumbExt);
                 fs.copyFileSync(path.join(DOWNLOADS_DIR, thumbFile), thumbDestPath);
                 console.log(`>>> Đã copy thumbnail: ${thumbDestPath}`);
               } else {
@@ -743,9 +746,10 @@ async function main(options = {}) {
             console.log('Đã dọn dẹp outputs/ cẩn thận cho video tiếp theo.');
           }
 
-          // Sau khi xong 1 video, append vào progress, gồm cả description và tags
+          // Sau khi xong 1 video, append vào progress, gồm cả title, description và tags
           progressData[url] = {
             status: 'Đã tạo video',
+            title: result.title || '',
             description: result.description || '',
             tags: Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '',
           };

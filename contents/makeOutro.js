@@ -18,11 +18,14 @@ const LOGO_SIZE = 80;
 const LOGO_MARGIN_TOP = 20;
 const LOGO_MARGIN_RIGHT = 20;
 
+/** Độ mờ của video nền outro trên nền đen (1.0 = rõ nhất, 0.0 = đen xì) */
+const OUTRO_VIDEO_OPACITY = 0.8;
+
 /** Phụ đề outro: góc trên trái, xếp dọc */
 const OUTRO_SUB_LEFT = 12;
 const OUTRO_SUB_TOP = 12;
-const OUTRO_SUB_LINE_HEIGHT = 62;
-const OUTRO_SUB_FONT_SIZE = 62;
+const OUTRO_SUB_LINE_HEIGHT = 72;
+const OUTRO_SUB_FONT_SIZE = 72;
 const OUTRO_SUB_CHAR_SPACING = 2;
 /** Karaoke ASS: độ dài mỗi ký tự (centisecond, 1 cs = 10 ms). */
 const OUTRO_SUB_KARAOKE_CS = 5;
@@ -475,8 +478,7 @@ export default async function main({ outroSeconds, outroFile, mode = 'single' } 
 
   const subEscaped = tempSub.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
   const scaleFilter = 'scale=-2:720';
-  const BG_OPACITY = 0.6;
-  const videoToScale = `color=c=black:s=1280x720:r=30:d=${outroSec}[bg];[0:v]${scaleFilter}[v];[bg][v]blend=all_mode=normal:all_opacity=${BG_OPACITY}[vpadded]`;
+  const videoToScale = `color=c=black:s=1280x720:r=30:d=${outroSec}[bg];[0:v]${scaleFilter}[v];[bg][v]blend=all_mode=normal:all_opacity=${OUTRO_VIDEO_OPACITY}[vpadded]`;
   const subFilter = `subtitles='${subEscaped}':charenc=UTF-8`;
   const hasLogo = fs.existsSync(LOGO_PATH);
 

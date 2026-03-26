@@ -8,3 +8,12 @@ backgrounds/dog
 backgrounds/outro
 .puppeteer-profile
 temp-chrome-profile
+
+# Ignore toàn bộ trong channel
+channel/
+# Không ignore các folder con (để Git còn duyệt vào bên trong)
+!channel/*
+# Ignore tất cả bên trong các folder con
+channel/*/
+# Nhưng cho phép file .xlsx
+!channel/*/*.xlsx

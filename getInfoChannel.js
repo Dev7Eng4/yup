@@ -153,13 +153,13 @@ async function main() {
       'CHANNEL NAME',
       'CHANNEL TAGS',
       'LINK VIDEO',
+      'STATUS',
       'TITLE',
       'DESCRIPTION',
       'TAGS',
       'BACKGROUND VIDEO',
       'OUTRO VIDEO',
       'OUTRO TIME',
-      'STATUS',
     ];
     const videoLinks = [...(result.video_links || [])].reverse();
 
@@ -207,22 +207,22 @@ async function main() {
     sheet.addRow(headers);
     rows.forEach(row => sheet.addRow(row));
 
-    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO (dài nhất) | TITLE | DESCRIPTION | TAGS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME | STATUS
+    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO (dài nhất) | STATUS | TITLE | DESCRIPTION | TAGS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME
     sheet.columns = [
-      { width: 25 },
-      { width: 28 },
-      { width: 20 },
-      { width: 50 },
-      { width: 50 },
-      { width: 50 },
-      { width: 30 },
-      { width: 22 },
-      { width: 22 },
-      { width: 15 },
-      { width: 22 },
+      { width: 25 }, // EMAIL
+      { width: 28 }, // CHANNEL NAME
+      { width: 20 }, // CHANNEL TAGS
+      { width: 50 }, // LINK VIDEO
+      { width: 22 }, // STATUS
+      { width: 50 }, // TITLE
+      { width: 50 }, // DESCRIPTION
+      { width: 30 }, // TAGS
+      { width: 22 }, // BACKGROUND VIDEO
+      { width: 22 }, // OUTRO VIDEO
+      { width: 15 }, // OUTRO TIME
     ];
 
-    // Thêm dropdown cho cột Background Video (cột H)
+    // Thêm dropdown cho cột Background Video (cột I)
     const backgroundsDir = path.join(__dirname, 'backgrounds');
     let bgOptions = [];
     if (fs.existsSync(backgroundsDir)) {
@@ -231,7 +231,7 @@ async function main() {
     if (bgOptions.length > 0) {
       const bgFormula = `"${bgOptions.join(',')}"`;
       for (let i = 2; i <= sheet.rowCount; i++) {
-        sheet.getCell(`H${i}`).dataValidation = {
+        sheet.getCell(`I${i}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           formulae: [bgFormula],
@@ -239,10 +239,10 @@ async function main() {
       }
     }
 
-    // Thêm dropdown cho cột STATUS (cột K): "" | "Đã tạo video" | "Đã đăng video"
+    // Thêm dropdown cho cột STATUS (cột E): "" | "Đã tạo video" | "Đã đăng video"
     const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
     for (let i = 2; i <= sheet.rowCount; i++) {
-      sheet.getCell(`K${i}`).dataValidation = {
+      sheet.getCell(`E${i}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [listFormula],
