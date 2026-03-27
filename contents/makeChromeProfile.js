@@ -4,8 +4,8 @@
  * Các lần sau: load lại profile đã lưu, không cần đăng nhập lại.
  *
  * Cách dùng:
- *   import { getOrCreateProfile } from './makeChromeProfile.js';
- *   const { context, page } = await getOrCreateProfile();
+ *   import { openChromeProfile } from './makeChromeProfile.js';
+ *   const { context, page } = await openChromeProfile();
  *   // ... dùng page ...
  *   await context.close();
  */
@@ -27,7 +27,7 @@ const PROFILE_DIR = path.join(ROOT, 'chrome-profile');
  * @param {boolean} [options.visible=true] - true = hiển thị bình thường, false = ẩn ngoài màn hình
  * @returns {Promise<{context: import('playwright').BrowserContext, page: import('playwright').Page}>}
  */
-export async function getOrCreateProfile(options = {}) {
+export async function openChromeProfile(options = {}) {
   const { headless = false, windowPosition, visible = true } = options;
 
   // const args = ['--no-sandbox', '--disable-blink-features=AutomationControlled', '--window-size=880,900'];
@@ -83,7 +83,7 @@ async function main() {
   console.log('Đang mở Chrome để tạo profile...');
   console.log(`Profile sẽ lưu tại: ${PROFILE_DIR}`);
 
-  const { context, page } = await getOrCreateProfile({ visible: true, isLoginRun: true });
+  const { context, page } = await openChromeProfile({ visible: true, isLoginRun: true });
 
   // Mở trang đăng nhập Google
   await page.goto('https://accounts.google.com', { waitUntil: 'domcontentloaded' });
@@ -125,4 +125,4 @@ export function cleanupTempProfile() {
   }
 }
 
-export default getOrCreateProfile;
+export default openChromeProfile;

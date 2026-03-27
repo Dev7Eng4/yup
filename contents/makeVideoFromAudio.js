@@ -7,19 +7,21 @@
  * - Phụ đề: copy trực tiếp file .srt/.vtt từ downloads/ — không scale mốc thời gian
  * - Ghép stock: crossfade (xfade) giữa các clip — clip cũ mờ dần, clip mới sáng dần
  * - mode: 'single' = xử lý 1 (audio có sẵn trong downloads), 'batch' = đọc CSV, tải từng link rồi xử lý
+ * - batch: 1 ảnh logo kênh trong thư mục chứa CSV/Excel — mọi video batch dùng chung ảnh đó; không có ảnh → LOGO_PATH mặc định
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
+import { VIDEO_MODE } from './downloadVideo.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
-/** 
+/**
  * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
  * - < 25 phút: 15
  * - 25 - 40 phút: 18
@@ -72,8 +74,18 @@ function stockNormalizeFilterChain(inputLabel, outLabel) {
  */
 const AUDIO_ATEMPO = 1.0;
 
-/** Logo hình tròn góc trên phải */
+/** Logo mặc định (single hoặc batch khi thư mục kênh không có ảnh) — hình tròn góc trên phải */
 const LOGO_PATH = path.join(ROOT, 'logo', 'catLogo.png');
+
+/** Ảnh trong thư mục (không đệ quy), sort theo tên — batch: lấy 1 file đầu làm logo kênh */
+function getImageFilesFromDir(dir) {
+  if (!dir || !fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter(f => /\.(png|jpe?g|gif|webp)$/i.test(f))
+    .sort((a, b) => a.localeCompare(b))
+    .map(f => path.join(dir, f));
+}
 const LOGO_SIZE = 80;
 const LOGO_MARGIN_TOP = 20;
 const LOGO_MARGIN_RIGHT = 20;
@@ -278,7 +290,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-preset',
     'medium',
     '-an',
-    outputPath,
+    outputPath
   );
 
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
@@ -298,16 +310,20 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
   const expectedAfter = durBefore / atempo;
   const pctLonger = ((1 / atempo - 1) * 100).toFixed(1);
   console.log(
-    `Đang chỉnh tempo (atempo=${atempo}: chậm hơn → dài hơn ~${pctLonger}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`,
+    `Đang chỉnh tempo (atempo=${atempo}: chậm hơn → dài hơn ~${pctLonger}%; dự kiến ~${formatClockDuration(
+      expectedAfter
+    )} / ${expectedAfter.toFixed(1)}s)...`
   );
   execSync(`ffmpeg -y -i "${sourcePath}" -filter:a "atempo=${atempo}" -c:a aac -b:a 192k "${destPath}"`, { stdio: 'inherit' });
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
-    `Sau atempo: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(1)}s) | ffprobe dự kiến ~${expectedAfter.toFixed(1)}s`,
+    `Sau atempo: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
+      1
+    )}s) | ffprobe dự kiến ~${expectedAfter.toFixed(1)}s`
   );
   if (durAfter < durBefore - 0.5) {
     console.warn(
-      'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.',
+      'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.'
     );
   }
 }
@@ -333,7 +349,7 @@ async function readVideoUrlsFromFile(inputFile = null) {
     const trangThaiIdx = headerRow.values.findIndex(v =>
       String(v || '')
         .toLowerCase()
-        .includes('status'),
+        .includes('status')
     );
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
     const outroVideoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro video');
@@ -486,8 +502,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 /**
  * Xử lý 1: tạo video từ audio có sẵn trong downloads
+ * @param {{ logoPath?: string }} [options] — batch: đường dẫn logo kênh; không truyền → LOGO_PATH
  */
-async function processOne(bgNameArg) {
+async function processOne(bgNameArg, options = {}) {
   let backgroundName = bgNameArg || 'cat';
   let backgroundsDir = path.join(ROOT, 'backgrounds', backgroundName);
 
@@ -520,7 +537,9 @@ async function processOne(bgNameArg) {
   /** Luôn đo trên file đã atempo (m4a tạm), không dùng độ dài MP3 gốc */
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
-    `Thời lượng audio sau atempo=${AUDIO_ATEMPO} (ffprobe, dùng cho nền + merge): ${formatClockDuration(audioDurationAfterTempo)} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
+    `Thời lượng audio sau atempo=${AUDIO_ATEMPO} (ffprobe, dùng cho nền + merge): ${formatClockDuration(
+      audioDurationAfterTempo
+    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`
   );
   console.log(`Stock videos: ${videoPaths.map(p => path.basename(p)).join(', ')}`);
 
@@ -540,7 +559,9 @@ async function processOne(bgNameArg) {
     const minSegDur = Math.min(...stockSegments.map(s => s.duration));
     const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
-      `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(1)}s)...`,
+      `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
+        1
+      )}s)...`
     );
   } else {
     console.log('Đang tạo nền stock (1 clip, loop nếu clip ngắn hơn audio)...');
@@ -553,7 +574,8 @@ async function processOne(bgNameArg) {
   const scaleFilter = 'scale=-2:720';
   const videoToScale = `[0:v]${scaleFilter}[vpadded]`;
   const videoEncode = '-c:v libx264 -crf 28 -preset medium -c:a aac -b:a 128k';
-  const hasLogo = fs.existsSync(LOGO_PATH);
+  const logoPathForMerge = options.logoPath != null ? options.logoPath : LOGO_PATH;
+  const hasLogo = fs.existsSync(logoPathForMerge);
 
   const buildLogoOverlay = inputLabel => {
     if (!hasLogo) return inputLabel;
@@ -577,14 +599,14 @@ async function processOne(bgNameArg) {
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
     const inputs = hasLogo
-      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${LOGO_PATH}"`
+      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${logoPathForMerge}"`
       : `-i "${tempVideoPath}" -i "${workingAudioPath}"`;
     console.log('Đang merge video + audio + Dịch subtitle sang ASS (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
     execSync(
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      },
+      }
     );
     fs.unlinkSync(tempSubPath);
   } else {
@@ -595,14 +617,14 @@ async function processOne(bgNameArg) {
       filterComplexFinal = `${videoToScale};[vpadded]copy[vout]`;
     }
     const inputs = hasLogo
-      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${LOGO_PATH}"`
+      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${logoPathForMerge}"`
       : `-i "${tempVideoPath}" -i "${workingAudioPath}"`;
     console.log('Đang merge video + audio (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
     execSync(
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      },
+      }
     );
   }
 
@@ -642,7 +664,7 @@ async function main(options = {}) {
     }
     console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
-    const { downloadSingleVideo } = await import('../downloadVideo.js');
+    const { downloadSingleVideo } = await import('./downloadVideo.js');
     const { default: makeOutro } = await import('./makeOutro.js');
 
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
@@ -660,6 +682,17 @@ async function main(options = {}) {
       try {
         progressData = JSON.parse(fs.readFileSync(progressFile, 'utf8'));
       } catch (e) {}
+    }
+
+    const channelLogoImages = getImageFilesFromDir(destFolder);
+    const batchChannelLogoPath = channelLogoImages.length > 0 ? channelLogoImages[0] : undefined;
+    if (batchChannelLogoPath) {
+      console.log(`Logo kênh (dùng cho mọi video batch): ${batchChannelLogoPath}`);
+      if (channelLogoImages.length > 1) {
+        console.warn(
+          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`
+        );
+      }
     }
 
     function sanitizeFilename(name) {
@@ -689,10 +722,23 @@ async function main(options = {}) {
         console.log(`\t> Sẽ tạo outro duration=${outroTime}s, video=${outroVideo || 'mặc định'}`);
       }
 
-      const result = await downloadSingleVideo(url);
+      const result = await downloadSingleVideo(url, {
+        mode: VIDEO_MODE.AUDIO,
+        callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
+          const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
+          progressData[url] = {
+            ...(progressData[url] || {}),
+            title: gemTitle || '',
+            description: gemDesc || '',
+            tags: tagsStr,
+          };
+          fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
+          console.log('Đã cập nhật progress (title/description/tags từ Gemini).');
+        },
+      });
       if (result) {
         try {
-          await processOne(background);
+          await processOne(background, { logoPath: batchChannelLogoPath });
           console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
 
           const audioPath = getAudioFile();
@@ -724,10 +770,11 @@ async function main(options = {}) {
 
           // Copy / Move final video vào thư mục channels/{folder tên channel}/videos với tên = title video
           if (fs.existsSync(finalVideoPath)) {
-            const finalFilenameBase = sanitizeFilename(result.title);
+            const titleForExport = progressData[url]?.title || result.title || '';
+            const finalFilenameBase = sanitizeFilename(titleForExport);
             const targetVideosDir = path.join(destFolder, 'videos');
             if (!fs.existsSync(targetVideosDir)) fs.mkdirSync(targetVideosDir, { recursive: true });
-            
+
             const destPath = path.join(targetVideosDir, finalFilenameBase + '.mp4');
             fs.copyFileSync(finalVideoPath, destPath);
             console.log(`\n>>> Đã xuất file video hoàn chỉnh: ${destPath}`);
@@ -760,12 +807,14 @@ async function main(options = {}) {
             console.log('Đã dọn dẹp outputs/ cẩn thận cho video tiếp theo.');
           }
 
-          // Sau khi xong 1 video, append vào progress, gồm cả title, description và tags
+          // Sau khi xong 1 video: status + metadata (ưu tiên Gemini đã ghi qua callback)
+          const prev = progressData[url] || {};
+          const ytTags = Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '';
           progressData[url] = {
             status: 'Đã tạo video',
-            title: result.title || '',
-            description: result.description || '',
-            tags: Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '',
+            title: prev.title || result.title || '',
+            description: prev.description !== undefined && prev.description !== '' ? prev.description : result.description || '',
+            tags: prev.tags != null && prev.tags !== '' ? prev.tags : ytTags,
           };
           fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
         } catch (err) {
@@ -779,7 +828,7 @@ async function main(options = {}) {
     try {
       console.log('\nĐang tự động đồng bộ trạng thái vào file Excel...');
       const cp = await import('child_process');
-      const syncScript = path.join(ROOT, 'syncStatusToExcel.js');
+      const syncScript = path.join(ROOT, 'contents', 'scripts', 'syncStatusToExcel.js');
       if (fs.existsSync(syncScript)) {
         cp.execSync(`node "${syncScript}"`, { stdio: 'inherit' });
       }

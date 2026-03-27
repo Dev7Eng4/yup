@@ -10,6 +10,7 @@ backgrounds/cat
 .puppeteer-profile
 temp-chrome-profile
 chrome-profile
+remade_videos
 
 # Ignore toàn bộ trong channel
 channels/

@@ -6,9 +6,10 @@
   "main": "index.js",
   "scripts": {
     "tao-chrome-profile": "node contents/makeChromeProfile.js",
-    "lay-thong-tin-youtube (video, channel)": "node -e \"import('./getInfoChannel.js').then(m=>m.default())\"",
-    "tao-batch-video-tu-audio": "node runBatchVideo.js",
-    "dong-bo-trang-thai": "node syncStatusToExcel.js"
+    "lay-thong-tin-youtube (video, channel)": "node -e \"import('./contents/getInfoChannel.js').then(m=>m.default())\"",
+    "tao-batch-video-tu-audio": "node contents/scripts/runBatchVideo.js",
+    "dong-bo-trang-thai": "node contents/scripts/syncStatusToExcel.js",
+    "lam-lai-video": "node contents/makeVideoFromFull.js"
   },
   "dependencies": {
     "@prevter/tiktok-scraper": "^1.0.1",

@@ -3,8 +3,14 @@
  * KẾT HỢP TUẦN TỰ (dưới 30 phút) VÀ SONG SONG (trên 30 phút).
  */
 
-import { getOrCreateProfile } from './makeChromeProfile.js';
-import { checkContentSrt, updateTranscriptSrt } from '../promts/updateContent.js';
+import { openChromeProfile } from './makeChromeProfile.js';
+import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
+import {
+  createPromptReCreateTitleVideo,
+  createPromptReCreateDescriptionVideo,
+  createPromptReCreateTagsVideo,
+} from './promts/createVideoInfo.js';
+import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
 const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
@@ -25,49 +31,6 @@ function getSrtDurationInMinutes(cuesArray) {
     return hours * 60 + minutes + seconds / 60;
   }
   return 0; // fallback nếu parse lỗi
-}
-
-async function waitForGeminiResponse(page, timeoutMs = 120000) {
-  await page.waitForSelector('.model-response-text, .response-content, message-content', {
-    timeout: timeoutMs,
-  });
-
-  const startTime = Date.now();
-  while (Date.now() - startTime < timeoutMs) {
-    const isStreaming = await page.evaluate(() => {
-      const stopBtn = document.querySelector('button[aria-label="Stop response"], mat-icon[data-mat-icon-name="stop_circle"]');
-      if (stopBtn) {
-        const rect = stopBtn.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      }
-      return false;
-    });
-    if (!isStreaming) break;
-    await page.waitForTimeout(1000);
-  }
-  await page.waitForTimeout(2000);
-}
-
-async function extractGeminiResponse(page) {
-  await page.waitForTimeout(1500);
-
-  return page.evaluate(() => {
-    const responses = Array.from(
-      document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]'),
-    );
-    if (responses.length === 0) return '';
-    const lastResponse = responses[responses.length - 1];
-
-    const codeBlocks = lastResponse.querySelectorAll('code[data-test-id="code-content"]');
-    if (codeBlocks.length > 0) {
-      return (codeBlocks[codeBlocks.length - 1].innerText || codeBlocks[codeBlocks.length - 1].textContent || '').trim();
-    }
-    const anyCode = lastResponse.querySelectorAll('code');
-    if (anyCode.length > 0) {
-      return (anyCode[anyCode.length - 1].innerText || anyCode[anyCode.length - 1].textContent || '').trim();
-    }
-    return (lastResponse.innerText || lastResponse.textContent || '').trim();
-  });
 }
 
 /**
@@ -130,15 +93,45 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
   await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   const result = await sendPromptToPage(page, prompt, `phần ${index + 1}/${totalChunks}`);
+
   return { index, result };
+}
+
+/**
+ * Trên cùng một tab Gemini: title → description → tags (createVideoInfo).
+ */
+async function runGeminiVideoMetaPrompts(page, { title, srtOut, description, tagsStr }) {
+  console.log('\n--- Gemini: tiêu đề → mô tả → tags (tuần tự) ---');
+  await page.waitForTimeout(1500);
+
+  const newTitle = await sendPromptToPage(page, createPromptReCreateTitleVideo(title, srtOut), 'tiêu đề video (JP)');
+  await page.waitForTimeout(1500);
+
+  const newDescription = await sendPromptToPage(
+    page,
+    createPromptReCreateDescriptionVideo(newTitle.trim(), description),
+    'mô tả video (JP)',
+  );
+  await page.waitForTimeout(1500);
+
+  const newTags = await sendPromptToPage(page, createPromptReCreateTagsVideo(newTitle.trim(), tagsStr), 'tags video (JP)');
+
+  return {
+    title: newTitle.trim(),
+    description: newDescription.trim(),
+    tags: newTags.trim(),
+  };
 }
 
 /**
  * Gửi prompt tới Gemini và nhận kết quả.
  * Áp dụng logic kép: Tuần tự cho <30 phút và Song song 5 tab cho >=30 phút.
+ *
+ * Trả về: { srt, title, description, tags } — luôn gọi createVideoInfo sau khi xử lý SRT (mọi độ dài).
  */
 export async function updateContentWithGemini(rawSrtContent, options = {}) {
-  const { mode = 'outro', title = '' } = options;
+  const { title = '', description = '', tags: tagsOpt = [] } = options;
+  const tagsStr = Array.isArray(tagsOpt) ? tagsOpt.join(', ') : String(tagsOpt || '');
 
   // Tách chunk từ file srt gốc
   const cues =
@@ -162,7 +155,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
   const totalChunks = chunks.length;
 
   console.log('Đang mở Chrome với profile đã lưu...');
-  const { context, page: initialPage } = await getOrCreateProfile({ visible: true });
+  const { context, page: initialPage } = await openChromeProfile({ visible: true });
 
   try {
     const finalResults = new Array(totalChunks).fill(null);
@@ -174,7 +167,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
 
       for (let i = 0; i < totalChunks; i++) {
         const chunk = chunks[i];
-        let prompt = updateTranscriptSrt(title, chunk, `phần ${i + 1}/${totalChunks}`);
+        let prompt = createPromptUpdateShortTranscript(title, chunk, `phần ${i + 1}/${totalChunks}`);
 
         console.log(`\n--- Đang gửi tuần tự prompt phần ${i + 1}/${totalChunks} ---`);
         const result = await sendPromptToPage(initialPage, prompt, `phần ${i + 1}/${totalChunks}`);
@@ -274,7 +267,9 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
         }
         if (missingIds.length > 0) {
           console.warn(
-            `\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(', ')}`,
+            `\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(
+              ', '
+            )}`
           );
         }
         finalSrt += mergedBlocks.join('\n\n') + '\n\n';
@@ -284,7 +279,25 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       }
     }
 
-    return finalSrt.trim();
+    const srtOut = finalSrt.trim();
+
+    // Sau SRT: luôn gọi title → description → tags trên tab đầu (dù <30 hay ≥30 phút)
+    if (durationMin >= 30) {
+      console.log(`Video ≥ 30 phút (~${durationMin.toFixed(1)} phút): dùng tab đầu tiên cho bước title/description/tags.`);
+      try {
+        await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      } catch (e) {
+        console.warn('Không thể goto Gemini cho bước meta:', e.message);
+      }
+      await initialPage.waitForTimeout(1500);
+    }
+
+    const meta = await runGeminiVideoMetaPrompts(initialPage, { title, srtOut, description, tagsStr });
+
+    return {
+      srt: srtOut,
+      ...meta,
+    };
   } finally {
     await context.close();
   }

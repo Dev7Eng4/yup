@@ -57,12 +57,12 @@ async function main() {
   }
 
   if (action === 'getInfoChannel') {
-    const { default: runGetInfo } = await import('./getInfoChannel.js');
+    const { default: runGetInfo } = await import('./contents/getInfoChannel.js');
     await runGetInfo();
   }
 
   if (action === 'downloadVideo') {
-    const { main } = await import('./downloadVideo.js');
+    const { main } = await import('./contents/downloadVideo.js');
     await main();
   }
 
