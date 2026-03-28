@@ -10,7 +10,7 @@ const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OVERLAY_DIR = path.join(ROOT, 'backgrounds', 'overlay');
 const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 
-const OVERLAY_OPACITY = 0.4;
+const OVERLAY_OPACITY = 0.45;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });

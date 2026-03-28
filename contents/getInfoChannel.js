@@ -154,9 +154,6 @@ async function main() {
       'CHANNEL TAGS',
       'LINK VIDEO',
       'STATUS',
-      'TITLE',
-      'DESCRIPTION',
-      'TAGS',
       'BACKGROUND VIDEO',
       'OUTRO VIDEO',
       'OUTRO TIME',
@@ -194,9 +191,9 @@ async function main() {
       videoLinks.length > 0
         ? videoLinks.map((video, i) => {
             const url = typeof video === 'string' ? video : video?.url || '';
-            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', '', '', '', '', ''];
+            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', '', ''];
           })
-        : [['', channelName, channelTagsStr, '(Không có video)', '', '', '', '', '', '', '']];
+        : [['', channelName, channelTagsStr, '(Không có video)', '', '', '', '']];
 
     if (!fs.existsSync(channelDir)) {
       fs.mkdirSync(channelDir, { recursive: true });
@@ -207,22 +204,19 @@ async function main() {
     sheet.addRow(headers);
     rows.forEach(row => sheet.addRow(row));
 
-    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO (dài nhất) | STATUS | TITLE | DESCRIPTION | TAGS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME
+    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO | STATUS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME
     sheet.columns = [
       { width: 25 }, // EMAIL
       { width: 28 }, // CHANNEL NAME
       { width: 20 }, // CHANNEL TAGS
       { width: 50 }, // LINK VIDEO
       { width: 22 }, // STATUS
-      { width: 50 }, // TITLE
-      { width: 50 }, // DESCRIPTION
-      { width: 30 }, // TAGS
       { width: 22 }, // BACKGROUND VIDEO
       { width: 22 }, // OUTRO VIDEO
       { width: 15 }, // OUTRO TIME
     ];
 
-    // Thêm dropdown cho cột Background Video (cột I)
+    // Thêm dropdown cho cột Background Video (cột F)
     const backgroundsDir = path.join(__dirname, '..', 'backgrounds');
     let bgOptions = [];
     if (fs.existsSync(backgroundsDir)) {
@@ -231,7 +225,7 @@ async function main() {
     if (bgOptions.length > 0) {
       const bgFormula = `"${bgOptions.join(',')}"`;
       for (let i = 2; i <= sheet.rowCount; i++) {
-        sheet.getCell(`I${i}`).dataValidation = {
+        sheet.getCell(`F${i}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           formulae: [bgFormula],

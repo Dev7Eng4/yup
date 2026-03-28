@@ -704,6 +704,19 @@ async function main(options = {}) {
       );
     }
 
+    /** Metadata Gemini theo URL (callback downloadTranscript) — ghi vào video-meta.json sau render */
+    const geminiByUrl = {};
+
+    /** Thư mục cho 1 video: destFolder/<title gốc đã sanitize> (tránh trùng tên) */
+    function resolveVideoOutputDir(originalTitle) {
+      let base = sanitizeFilename(originalTitle || 'video');
+      let dir = path.join(destFolder, base);
+      if (!fs.existsSync(dir)) return dir;
+      let n = 2;
+      while (fs.existsSync(path.join(destFolder, `${base}_${n}`))) n += 1;
+      return path.join(destFolder, `${base}_${n}`);
+    }
+
     // Luống bắt đầu batch -> Clean folder outputs
     if (fs.existsSync(OUTPUT_DIR)) {
       const outputFiles = fs.readdirSync(OUTPUT_DIR);
@@ -726,14 +739,12 @@ async function main(options = {}) {
         mode: VIDEO_MODE.AUDIO,
         callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
           const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
-          progressData[url] = {
-            ...(progressData[url] || {}),
+          geminiByUrl[url] = {
             title: gemTitle || '',
             description: gemDesc || '',
             tags: tagsStr,
           };
-          fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
-          console.log('Đã cập nhật progress (title/description/tags từ Gemini).');
+          console.log('Đã nhận title/description/tags từ Gemini (sẽ ghi video-meta.json sau khi render).');
         },
       });
       if (result) {
@@ -768,30 +779,42 @@ async function main(options = {}) {
             }
           }
 
-          // Copy / Move final video vào thư mục channels/{folder tên channel}/videos với tên = title video
+          // Mỗi video: folder theo title gốc (YouTube) — video.mp4, thumbnail.*, video-meta.json
           if (fs.existsSync(finalVideoPath)) {
-            const titleForExport = progressData[url]?.title || result.title || '';
-            const finalFilenameBase = sanitizeFilename(titleForExport);
-            const targetVideosDir = path.join(destFolder, 'videos');
-            if (!fs.existsSync(targetVideosDir)) fs.mkdirSync(targetVideosDir, { recursive: true });
+            const originalTitle = result.title || '';
+            const perVideoDir = resolveVideoOutputDir(originalTitle);
+            fs.mkdirSync(perVideoDir, { recursive: true });
 
-            const destPath = path.join(targetVideosDir, finalFilenameBase + '.mp4');
-            fs.copyFileSync(finalVideoPath, destPath);
-            console.log(`\n>>> Đã xuất file video hoàn chỉnh: ${destPath}`);
+            const destVideoPath = path.join(perVideoDir, 'video.mp4');
+            fs.copyFileSync(finalVideoPath, destVideoPath);
+            console.log(`\n>>> Đã xuất video: ${destVideoPath}`);
 
-            // Tìm và copy thumbnail từ thư mục downloads
             if (fs.existsSync(DOWNLOADS_DIR)) {
               const downloadFiles = fs.readdirSync(DOWNLOADS_DIR);
               const thumbFile = downloadFiles.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
               if (thumbFile) {
                 const thumbExt = path.extname(thumbFile);
-                const thumbDestPath = path.join(targetVideosDir, finalFilenameBase + thumbExt);
+                const thumbDestPath = path.join(perVideoDir, `thumbnail${thumbExt}`);
                 fs.copyFileSync(path.join(DOWNLOADS_DIR, thumbFile), thumbDestPath);
                 console.log(`>>> Đã copy thumbnail: ${thumbDestPath}`);
               } else {
-                console.log(`>>> Không tìm thấy thumbnail bằng định dạng ảnh (.jpg/.webp...) trong downloads.`);
+                console.log(`>>> Không tìm thấy thumbnail (.jpg/.webp...) trong downloads.`);
               }
             }
+
+            const ytTags = Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '';
+            const gem = geminiByUrl[url] || {};
+            const metaPayload = {
+              title: originalTitle,
+              description: result.description || '',
+              tags: ytTags,
+              titleGemini: gem.title || '',
+              descriptionGemini: gem.description || '',
+              tagsGemini: gem.tags || '',
+            };
+            const metaPath = path.join(perVideoDir, 'video-meta.json');
+            fs.writeFileSync(metaPath, JSON.stringify(metaPayload, null, 2), 'utf8');
+            console.log(`>>> Đã lưu metadata: ${metaPath}`);
           } else {
             console.error(`\n>>> Lỗi: Không tìm thấy file video đầu ra ${finalVideoPath}`);
           }
@@ -807,14 +830,9 @@ async function main(options = {}) {
             console.log('Đã dọn dẹp outputs/ cẩn thận cho video tiếp theo.');
           }
 
-          // Sau khi xong 1 video: status + metadata (ưu tiên Gemini đã ghi qua callback)
-          const prev = progressData[url] || {};
-          const ytTags = Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '';
+          // Chỉ đồng bộ STATUS vào Excel — title/description/tags nằm trong video-meta.json từng folder
           progressData[url] = {
             status: 'Đã tạo video',
-            title: prev.title || result.title || '',
-            description: prev.description !== undefined && prev.description !== '' ? prev.description : result.description || '',
-            tags: prev.tags != null && prev.tags !== '' ? prev.tags : ytTags,
           };
           fs.writeFileSync(progressFile, JSON.stringify(progressData, null, 2), 'utf8');
         } catch (err) {
