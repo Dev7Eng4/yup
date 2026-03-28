@@ -377,8 +377,6 @@ async function readVideoUrlsFromFile(inputFile = null) {
         .includes('status')
     );
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
-    const outroVideoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro video');
-    const outroTimeIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro time');
     const items = [];
     for (let i = 2; i <= sheet.rowCount; i++) {
       const row = sheet.getRow(i);
@@ -389,15 +387,10 @@ async function readVideoUrlsFromFile(inputFile = null) {
       const rawVal = row.getCell(videoIdx).value;
       const val = rawVal && typeof rawVal === 'object' ? String(rawVal.text || rawVal.hyperlink || '').trim() : String(rawVal || '').trim();
       const bgVal = bgIdx >= 0 ? String(row.getCell(bgIdx).value || '').trim() : 'cat';
-      const outroVideoStr = outroVideoIdx >= 0 ? String(row.getCell(outroVideoIdx).value || '').trim() : '';
-      const outroTimeStr = outroTimeIdx >= 0 ? String(row.getCell(outroTimeIdx).value || '').trim() : '';
-      const outroTimeNum = parseFloat(outroTimeStr) || 0;
       if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
         items.push({
           url: val,
           background: bgVal || 'cat',
-          outroVideo: outroVideoStr,
-          outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
         });
       }
     }
@@ -412,8 +405,6 @@ async function readVideoUrlsFromFile(inputFile = null) {
   if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO trong CSV.');
   const trangThaiIdx = headers.findIndex(h => h.toLowerCase().includes('status'));
   const bgIdx = headers.findIndex(h => h.toLowerCase() === 'background video');
-  const outroVideoIdx = headers.findIndex(h => h.toLowerCase() === 'outro video');
-  const outroTimeIdx = headers.findIndex(h => h.toLowerCase() === 'outro time');
   const items = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
@@ -423,15 +414,10 @@ async function readVideoUrlsFromFile(inputFile = null) {
     }
     const val = cells[videoIdx] || '';
     const bgVal = bgIdx >= 0 ? (cells[bgIdx] || '').trim() : 'cat';
-    const outroVideoStr = outroVideoIdx >= 0 ? (cells[outroVideoIdx] || '').trim() : '';
-    const outroTimeStr = outroTimeIdx >= 0 ? (cells[outroTimeIdx] || '').trim() : '';
-    const outroTimeNum = parseFloat(outroTimeStr) || 0;
     if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
       items.push({
         url: val,
         background: bgVal || 'cat',
-        outroVideo: outroVideoStr,
-        outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
       });
     }
   }
@@ -740,7 +726,6 @@ async function main(options = {}) {
     console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
     const { downloadSingleVideo } = await import('./downloadVideo.js');
-    const { default: makeOutro } = await import('./makeOutro.js');
 
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
     let actualInputFile = inputFile;
@@ -797,11 +782,8 @@ async function main(options = {}) {
     }
 
     for (let i = 0; i < items.length; i++) {
-      const { url, background, outroVideo, outroTime } = items[i];
+      const { url, background } = items[i];
       console.log(`\n[${i + 1}/${items.length}] ${url} (Background: ${background})`);
-      if (outroTime > 0) {
-        console.log(`\t> Sẽ tạo outro duration=${outroTime}s, video=${outroVideo || 'mặc định'}`);
-      }
 
       const result = await downloadSingleVideo(url, {
         mode: VIDEO_MODE.AUDIO,
@@ -829,41 +811,7 @@ async function main(options = {}) {
             url,
             geminiByUrl
           });
-          console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
-
-          const audioPath = getAudioFile();
-          const baseName = path.basename(audioPath, path.extname(audioPath));
-          let finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg.mp4`); // Mặc định nếu không có outro
-
-          if (outroTime > 0) {
-            console.log(`\n---> Gọi makeOutro.js cho ${url}`);
-            try {
-              await makeOutro({ outroSeconds: outroTime, outroFile: outroVideo, mode: 'batch' });
-              console.log(`ĐÃ HOÀN THÀNH OUTRO: ${url}`);
-
-              console.log(`\n---> Gọi ghép video chính + outro...`);
-              const { default: mergeOutroIntoVideo } = await import('./mergeOutroIntoVideo.js');
-
-              const fullF = `${baseName}-with-bg.mp4`;
-              const outroF = `${baseName}-outro.mp4`;
-
-              await mergeOutroIntoVideo({ mode: 'batch', fullFile: fullF, outroFile: outroF });
-              console.log(`ĐÃ MERGE OUTRO VÀO VIDEO CHÍNH.`);
-
-              // mergeOutroIntoVideo trả ra: [tên-video-gốc]-merged.mp4
-              // vì fullFile là `${baseName}-with-bg.mp4` nên output là `${baseName}-with-bg-merged.mp4`
-              finalVideoPath = path.join(OUTPUT_DIR, `${baseName}-with-bg-merged.mp4`);
-            } catch (err) {
-              console.error('Lỗi tạo/ghép outro:', err.message);
-            }
-          }
-
-          // Folder creation and metadata saving moved inside processOne
-          if (fs.existsSync(finalVideoPath)) {
-            // No changes needed here, logic is now in processOne
-          } else {
-            console.error(`\n>>> Lỗi: Không tìm thấy file video đầu ra ${finalVideoPath}`);
-          }
+          console.log(`ĐÃ HOÀN THÀNH VIDEO: ${url}`);
 
           // Xóa tất cả file trong outputs để xử lý video tiếp theo
           if (fs.existsSync(OUTPUT_DIR)) {
