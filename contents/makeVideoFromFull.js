@@ -10,7 +10,11 @@ const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OVERLAY_DIR = path.join(ROOT, 'backgrounds', 'overlay');
 const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 
-const OVERLAY_OPACITY = 0.45;
+// ok -> 0.4 + 0.5
+/** Lớp ảnh (dưới) — giữ như phiên bản cũ */
+const IMAGE_OVERLAY_OPACITY = 0.3;
+/** Lớp video (trên cùng) */
+const VIDEO_OVERLAY_OPACITY = 0.4;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -18,44 +22,68 @@ if (!fs.existsSync(OUTPUT_DIR)) {
 
 function getFiles(dir, exts) {
   if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir)
+  return fs
+    .readdirSync(dir)
     .filter(f => exts.some(ext => f.toLowerCase().endsWith(ext)))
     .map(f => path.join(dir, f));
 }
 
-async function remakeVideo(videoPath, imagePath, outputPath) {
+async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
   return new Promise((resolve, reject) => {
     console.log(`\nĐang xử lý: ${path.basename(videoPath)}`);
-    console.log(`Ảnh phủ: ${path.basename(imagePath)}`);
-    
-    // filter_complex:
-    // 1. scale2ref: Ép kích thước ảnh (input 1) cho bằng với kích thước video (input 0)
-    // 2. format+colorchannelmixer: Chuyển ảnh sang kênh alpha và giảm opacity (aa=OVERLAY_OPACITY)
-    // 3. overlay rồi format=yuv420p: ép 8-bit 4:2:0 — tránh nguồn AV1/10-bit/HDR làm đầu ra bị player
-    //    Windows hiểu nhầm là “cần AV1” khi pixel format / tag MP4 không chuẩn H.264.
+    console.log(`Ảnh phủ (dưới, opacity ${IMAGE_OVERLAY_OPACITY}): ${path.basename(imagePath)}`);
+    console.log(`Video phủ (trên, loop, opacity ${VIDEO_OVERLAY_OPACITY}): ${path.basename(overlayVideoPath)}`);
+
+    // 0 = video gốc; 1 = ảnh; 2 = video overlay (-stream_loop -1)
+    // Bước 1: ảnh lên nền [0:v] như cũ → [base1]
+    // Bước 2: video scale + alpha, overlay lên [base1] tới hết video gốc
     const filterComplex =
       `[1:v][0:v]scale2ref=w=iw:h=ih[img][vid];` +
-      `[img]format=argb,colorchannelmixer=aa=${OVERLAY_OPACITY}[transparent_img];` +
-      `[vid][transparent_img]overlay=0:0,format=yuv420p[outv]`;
+      `[img]format=argb,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
+      `[vid][timg]overlay=0:0[base1];` +
+      `[2:v][base1]scale2ref=w=iw:h=ih[ov][base];` +
+      `[ov]format=argb,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
+      `[base][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
 
     const args = [
       '-y',
-      '-i', videoPath,
-      '-i', imagePath,
-      '-filter_complex', filterComplex,
-      '-map', '[outv]',
-      '-map', '0:a?',
-      '-c:v', 'libx264',
-      '-profile:v', 'main',
-      '-level', '4.0',
-      '-pix_fmt', 'yuv420p',
-      '-crf', '28',
-      '-preset', 'medium',
-      '-tag:v', 'avc1',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-movflags', '+faststart',
-      '-f', 'mp4',
+      '-i',
+      videoPath,
+      '-i',
+      imagePath,
+      '-stream_loop',
+      '-1',
+      '-i',
+      overlayVideoPath,
+      '-filter_complex',
+      filterComplex,
+      '-map',
+      '[outv]',
+      '-map',
+      '0:a?',
+      '-shortest',
+      '-c:v',
+      'libx264',
+      '-profile:v',
+      'main',
+      '-level',
+      '4.0',
+      '-pix_fmt',
+      'yuv420p',
+      '-crf',
+      '28',
+      '-preset',
+      'medium',
+      '-tag:v',
+      'avc1',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      '-movflags',
+      '+faststart',
+      '-f',
+      'mp4',
       outputPath,
     ];
 
@@ -76,25 +104,30 @@ async function remakeVideo(videoPath, imagePath, outputPath) {
 async function main() {
   const videos = getFiles(DOWNLOADS_DIR, ['.mp4', '.mov', '.mkv', '.avi']);
   const images = getFiles(OVERLAY_DIR, ['.png', '.jpg', '.jpeg', '.webp']);
+  const overlayVideos = getFiles(OVERLAY_DIR, ['.mp4', '.webm', '.mov', '.mkv']);
 
   if (videos.length === 0) {
     console.log(`Không tìm thấy video nào trong thư mục ${DOWNLOADS_DIR}`);
     return;
   }
   if (images.length === 0) {
-    console.log(`Không tìm thấy ảnh nào trong thư mục ${OVERLAY_DIR}`);
+    console.log(`Không tìm thấy ảnh overlay (.png/.jpg/...) trong ${OVERLAY_DIR}`);
+    return;
+  }
+  if (overlayVideos.length === 0) {
+    console.log(`Không tìm thấy video overlay (.mp4/.webm/...) trong ${OVERLAY_DIR}`);
     return;
   }
 
-  // Lấy ảnh đầu tiên trong thư mục làm overlay chuẩn
   const overlayImage = images[0];
+  const overlayClip = overlayVideos[0];
 
   for (const video of videos) {
     const filename = path.parse(video).name;
     const outputPath = path.join(OUTPUT_DIR, `${filename}_remade.mp4`);
-    await remakeVideo(video, overlayImage, outputPath);
+    await remakeVideo(video, overlayImage, overlayClip, outputPath);
   }
-  
+
   console.log('\nĐã xử lý xong tất cả nội dung!');
 }
 
