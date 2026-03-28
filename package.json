@@ -16,6 +16,7 @@
     "axios": "^1.13.6",
     "debug": "^4.3.4",
     "exceljs": "^4.4.0",
+    "glob": "^13.0.6",
     "inquirer": "^9.2.23",
     "playwright": "^1.58.2",
     "puppeteer": "^24.40.0",

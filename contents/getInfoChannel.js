@@ -148,21 +148,11 @@ async function main() {
     const result = await getChannelInfo(url);
 
     // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
-    const headers = [
-      'EMAIL',
-      'CHANNEL NAME',
-      'CHANNEL TAGS',
-      'LINK VIDEO',
-      'STATUS',
-      'BACKGROUND VIDEO',
-      'OUTRO VIDEO',
-      'OUTRO TIME',
-    ];
+    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'STATUS', 'BACKGROUND VIDEO', 'OUTRO VIDEO', 'OUTRO TIME'];
     const videoLinks = [...(result.video_links || [])].reverse();
 
     const channelName = result.name || '';
     const channelTagsStr = (result.tags || []).join(', ');
-    const safeChannelName = channelName.replace(/[\\/:*?"<>|]/g, '_') || 'output';
 
     let excelFilename = 'unknown_id';
     const matchUrl = url.match(/@([a-zA-Z0-9_.-]+)/);
@@ -178,12 +168,12 @@ async function main() {
       excelFilename = result.metadata.channel_id || result.metadata.id;
     }
 
-    // Thư mục lưu kết quả: channels/<Tên Kênh>/
-    const channelDir = path.join(DEFAULT_OUTPUT_DIR, safeChannelName);
+    // Thư mục lưu kết quả: channels/<Tên người dùng>/
+    const channelDir = path.join(DEFAULT_OUTPUT_DIR, excelFilename);
     const outputExcelPath = path.join(channelDir, `${excelFilename}.xlsx`);
 
     if (fs.existsSync(outputExcelPath)) {
-      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${safeChannelName}/${excelFilename}.xlsx) BỎ QUA.\n`);
+      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${excelFilename}/${excelFilename}.xlsx) BỎ QUA.\n`);
       return;
     }
 
