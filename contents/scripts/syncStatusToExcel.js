@@ -76,18 +76,6 @@ async function main() {
           statusIdx = nextCol++;
           headerRow.getCell(statusIdx).value = 'STATUS';
         }
-        if (titleIdx < 0) {
-          titleIdx = nextCol++;
-          headerRow.getCell(titleIdx).value = 'TITLE';
-        }
-        if (descIdx < 0) {
-          descIdx = nextCol++;
-          headerRow.getCell(descIdx).value = 'DESCRIPTION';
-        }
-        if (tagsIdx < 0) {
-          tagsIdx = nextCol++;
-          headerRow.getCell(tagsIdx).value = 'TAGS';
-        }
 
         let updatedCount = 0;
         for (let i = 2; i <= sheet.rowCount; i++) {
