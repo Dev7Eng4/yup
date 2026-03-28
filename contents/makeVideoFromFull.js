@@ -12,9 +12,9 @@ const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 
 // ok -> 0.4 + 0.5
 /** Lớp ảnh (dưới) — giữ như phiên bản cũ */
-const IMAGE_OVERLAY_OPACITY = 0.3;
+const IMAGE_OVERLAY_OPACITY = 0.4;
 /** Lớp video (trên cùng) */
-const VIDEO_OVERLAY_OPACITY = 0.4;
+const VIDEO_OVERLAY_OPACITY = 0.45;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
