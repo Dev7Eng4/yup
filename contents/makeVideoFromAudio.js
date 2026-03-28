@@ -21,6 +21,9 @@ const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
+/** Giới hạn số lượng video xử lý tối đa trong 1 lần chạy batch */
+const BATCH_LIMIT = 10;
+
 /**
  * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
  * - < 25 phút: 15
@@ -155,6 +158,14 @@ function formatClockDuration(sec) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, '0')}`;
+}
+
+/**
+ * Loại bỏ các ký tự không hợp lệ cho tên file
+ */
+function sanitizeFilename(name) {
+  if (!name) return '';
+  return name.replace(/[\\/:*?"<>|]/g, '_').trim();
 }
 
 /**
@@ -568,7 +579,7 @@ async function processOne(bgNameArg, options = {}) {
     console.log(`Phụ đề: ${path.basename(subtitlePath)} (${getSubtitleFormatLabel(subtitlePath)})`);
   }
 
-  const baseName = path.basename(audioPath, path.extname(audioPath));
+  const baseName = originalTitle ? sanitizeFilename(originalTitle) : path.basename(audioPath, path.extname(audioPath));
   const xfadeFilterPath = path.join(OUTPUT_DIR, 'xfade_stock.txt');
   const tempVideoPath = path.join(OUTPUT_DIR, 'temp_video.mp4');
   const outputPath = path.join(OUTPUT_DIR, `${baseName}-with-bg.mp4`);
@@ -657,7 +668,7 @@ async function processOne(bgNameArg, options = {}) {
   if (perVideoDir) {
     fs.mkdirSync(perVideoDir, { recursive: true });
 
-    const destVideoPath = path.join(perVideoDir, 'video.mp4');
+    const destVideoPath = path.join(perVideoDir, `${baseName}.mp4`);
     fs.copyFileSync(outputPath, destVideoPath);
     console.log(`>>> Đã xuất video vào folder ID: ${destVideoPath}`);
 
@@ -703,6 +714,7 @@ async function main(options = {}) {
   const mode = options.mode || 'single';
   const backgroundName = options.background || 'cat';
   const inputFile = options.inputFile || null;
+  const batchLimit = options.batchLimit || BATCH_LIMIT;
 
   if (mode === 'single') {
     if (!fs.existsSync(DOWNLOADS_DIR)) {
@@ -719,9 +731,13 @@ async function main(options = {}) {
   }
 
   if (mode === 'batch') {
-    const items = await readVideoUrlsFromFile(inputFile);
+    let items = await readVideoUrlsFromFile(inputFile);
     if (items.length === 0) {
       throw new Error('Không có link video nào trong CSV/Excel.');
+    }
+    if (items.length > batchLimit) {
+      console.log(`\t> Giới hạn tối đa ${batchLimit} video per batch, bỏ qua ${items.length - batchLimit} link còn lại.`);
+      items = items.slice(0, batchLimit);
     }
     console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
@@ -758,7 +774,7 @@ async function main(options = {}) {
       }
     }
 
-    // Removed sanitizeFilename function as we now use Video ID for folder names
+
 
     /** Metadata Gemini theo URL (callback downloadTranscript) — ghi vào video-meta.json sau render */
     const geminiByUrl = {};

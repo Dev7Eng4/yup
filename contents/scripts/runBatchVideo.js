@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CHANNELS_DIR = path.join(__dirname, '..', '..', 'channels');
 
+const BATCH_LIMIT = 10;
+
 async function main() {
   let inputFile = null;
 
@@ -46,7 +48,7 @@ async function main() {
   }
 
   const { default: makeVideoFromAudio } = await import('../makeVideoFromAudio.js');
-  await makeVideoFromAudio({ mode: 'batch', inputFile });
+  await makeVideoFromAudio({ mode: 'batch', inputFile, batchLimit: BATCH_LIMIT });
 }
 
 main().catch(err => {
