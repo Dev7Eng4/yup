@@ -34,19 +34,19 @@ async function getVideoInfo(url) {
     title: raw.title,
     description: raw.description || '',
     tags: raw.tags || [],
-    // metadata: {
-    //   id: raw.id,
-    //   url: raw.webpage_url || raw.url,
-    //   duration: raw.duration,
-    //   view_count: raw.view_count,
-    //   like_count: raw.like_count,
-    //   upload_date: raw.upload_date,
-    //   uploader: raw.uploader,
-    //   channel_id: raw.channel_id,
-    //   channel_url: raw.channel_url,
-    //   thumbnail: raw.thumbnail,
-    //   categories: raw.categories || [],
-    // },
+    metadata: {
+      id: raw.id,
+      url: raw.webpage_url || raw.url,
+      duration: raw.duration,
+      view_count: raw.view_count,
+      like_count: raw.like_count,
+      upload_date: raw.upload_date,
+      uploader: raw.uploader,
+      channel_id: raw.channel_id,
+      channel_url: raw.channel_url,
+      thumbnail: raw.thumbnail,
+      categories: raw.categories || [],
+    },
   };
 }
 
@@ -173,7 +173,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { videoTitle, des
               title: geminiOut.title,
               description: geminiOut.description ?? '',
               tags: geminiOut.tags ?? '',
-            })
+            }),
           );
           console.log('✅ Đã gửi title/description/tags (Gemini) qua callback.');
         } catch (cbErr) {
@@ -308,15 +308,16 @@ async function downloadSingleVideo(url, options = {}) {
     if (mode !== VIDEO_MODE.AUDIO) {
       await downloadVideo(url, { outputDir: DEFAULT_OUTPUT_DIR });
     }
+    await downloadThumbnail(url, { outputDir: DEFAULT_OUTPUT_DIR });
     await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
     try {
-      // await downloadTranscript(url, {
-      //   outputDir: DEFAULT_OUTPUT_DIR,
-      //   videoTitle: result.title,
-      //   description: result.description,
-      //   tags: result.tags,
-      //   callback,
-      // });
+      await downloadTranscript(url, {
+        outputDir: DEFAULT_OUTPUT_DIR,
+        videoTitle: result.title,
+        description: result.description,
+        tags: result.tags,
+        callback,
+      });
     } catch (err) {
       console.warn('Không tải được transcript:', err.message);
     }
@@ -372,24 +373,24 @@ async function main() {
     console.log('Đã lưu thông tin vào downloads/output.json');
 
     await downloadVideo(url);
+    await downloadAudio(url);
+    await downloadThumbnail(url);
 
     let mergedResult = { ...result };
     try {
-      // await downloadTranscript(url, {
-      //   videoTitle: result.title,
-      //   description: result.description,
-      //   tags: result.tags,
-      //   callback: ({ title, description, tags }) => {
-      //     if (title != null && String(title).trim() !== '') mergedResult.title = String(title).trim();
-      //     if (description != null) mergedResult.description = description;
-      //     if (tags != null) mergedResult.tags = tags;
-      //   },
-      // });
+      await downloadTranscript(url, {
+        videoTitle: result.title,
+        description: result.description,
+        tags: result.tags,
+        callback: ({ title, description, tags }) => {
+          if (title != null && String(title).trim() !== '') mergedResult.title = String(title).trim();
+          if (description != null) mergedResult.description = description;
+          if (tags != null) mergedResult.tags = tags;
+        },
+      });
     } catch (err) {
       console.warn('Không tải được transcript (có thể do 429):', err.message);
     }
-
-    await downloadAudio(url);
 
     fs.writeFileSync(OUTPUT_FILE, JSON.stringify(mergedResult, null, 2), 'utf-8');
     console.log('Đã cập nhật downloads/output.json (title/description/tags từ Gemini qua callback nếu có).');
