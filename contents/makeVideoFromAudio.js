@@ -107,11 +107,25 @@ const SUB_PADDING_HORIZONTAL = 40;
 const SUBTITLE_CHAR_SPACING = 2;
 
 const DATA_FILE_PATHS = [
+  path.join(ROOT, 'channels', '*', 'output.xlsx'), // Check all subfolders
+  path.join(ROOT, 'channels', '*', 'output.csv'),
   path.join(ROOT, 'channels', 'output.xlsx'),
   path.join(ROOT, 'channels', 'output.csv'),
   path.join(ROOT, 'output.xlsx'),
   path.join(ROOT, 'output.csv'),
 ];
+
+/**
+ * Helper to find the first existing data file, supporting glob-like patterns for subdirectories
+ */
+async function findDataFile() {
+  const glob = (await import('glob')).default;
+  for (const pattern of DATA_FILE_PATHS) {
+    const files = glob.sync(pattern.replace(/\\/g, '/'));
+    if (files.length > 0) return files[0];
+  }
+  return null;
+}
 
 /**
  * Lấy duration (giây) của file media bằng ffprobe
@@ -332,7 +346,18 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
  * Đọc file Excel/CSV và lấy danh sách URL từ cột Video
  */
 async function readVideoUrlsFromFile(inputFile = null) {
-  const filePath = inputFile || DATA_FILE_PATHS.find(p => fs.existsSync(p));
+  let filePath = inputFile;
+  if (!filePath) {
+    const glob = (await import('glob')).default;
+    for (const pattern of DATA_FILE_PATHS) {
+      const files = glob.sync(pattern.replace(/\\/g, '/'));
+      if (files.length > 0) {
+        filePath = files[0];
+        break;
+      }
+    }
+  }
+
   if (!filePath) {
     throw new Error(`Không tìm thấy file output. Cần tạo từ "Lấy thông tin YouTube" trước.`);
   }
@@ -502,9 +527,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 /**
  * Xử lý 1: tạo video từ audio có sẵn trong downloads
- * @param {{ logoPath?: string }} [options] — batch: đường dẫn logo kênh; không truyền → LOGO_PATH
+ * @param {string} bgNameArg - Tên background
+ * @param {object} [options] - Tùy chọn
+ * @param {string} [options.logoPath] - Batch: đường dẫn logo kênh
+ * @param {string} [options.perVideoDir] - Batch: thư mục xuất của riêng video này
+ * @param {string} [options.originalTitle] - Tiêu đề gốc YouTube
+ * @param {string} [options.description] - Mô tả gốc
+ * @param {string} [options.tags] - Tags gốc
+ * @param {string} [options.url] - URL video (dùng cho lookup geminiByUrl)
+ * @param {object} [options.geminiByUrl] - Map chứa metadata từ Gemini
  */
 async function processOne(bgNameArg, options = {}) {
+  const { perVideoDir, originalTitle, description, tags, url, geminiByUrl } = options;
   let backgroundName = bgNameArg || 'cat';
   let backgroundsDir = path.join(ROOT, 'backgrounds', backgroundName);
 
@@ -632,6 +666,47 @@ async function processOne(bgNameArg, options = {}) {
   fs.unlinkSync(slowedAudioPath);
 
   console.log(`\nĐã tạo: ${outputPath}`);
+
+  // Nếu có perVideoDir (batch mode), copy kết quả và lưu metadata
+  if (perVideoDir) {
+    fs.mkdirSync(perVideoDir, { recursive: true });
+
+    const destVideoPath = path.join(perVideoDir, 'video.mp4');
+    fs.copyFileSync(outputPath, destVideoPath);
+    console.log(`>>> Đã xuất video vào folder ID: ${destVideoPath}`);
+
+    // Copy thumbnail nếu có
+    if (fs.existsSync(DOWNLOADS_DIR)) {
+      const downloadFiles = fs.readdirSync(DOWNLOADS_DIR);
+      const thumbFile = downloadFiles.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
+      if (thumbFile) {
+        const thumbExt = path.extname(thumbFile);
+        const thumbDestPath = path.join(perVideoDir, `thumbnail${thumbExt}`);
+        fs.copyFileSync(path.join(DOWNLOADS_DIR, thumbFile), thumbDestPath);
+        console.log(`>>> Đã copy thumbnail: ${thumbDestPath}`);
+      }
+    }
+
+    // Đợi 1 chút để Gemini callback có thời gian cập nhật (nếu đang chạy song song)
+    let gem = (geminiByUrl && url) ? geminiByUrl[url] : {};
+    if (!gem || !gem.title) {
+        await new Promise(r => setTimeout(r, 2000));
+        gem = (geminiByUrl && url) ? geminiByUrl[url] : {};
+    }
+
+    const ytTagsStr = Array.isArray(tags) ? tags.join(', ') : (tags || '');
+    const metaPayload = {
+      title: originalTitle || '',
+      description: description || '',
+      tags: ytTagsStr,
+      titleGemini: gem?.title || '',
+      descriptionGemini: gem?.description || '',
+      tagsGemini: gem?.tags || '',
+    };
+    const metaPath = path.join(perVideoDir, 'video-meta.json');
+    fs.writeFileSync(metaPath, JSON.stringify(metaPayload, null, 2), 'utf8');
+    console.log(`>>> Đã lưu metadata: ${metaPath}`);
+  }
 }
 
 /**
@@ -668,7 +743,10 @@ async function main(options = {}) {
     const { default: makeOutro } = await import('./makeOutro.js');
 
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
-    const actualInputFile = inputFile || DATA_FILE_PATHS.find(p => fs.existsSync(p));
+    let actualInputFile = inputFile;
+    if (!actualInputFile) {
+      actualInputFile = await findDataFile();
+    }
     let destFolder = path.join(ROOT, 'channels');
     if (actualInputFile) {
       destFolder = path.dirname(actualInputFile);
@@ -695,26 +773,16 @@ async function main(options = {}) {
       }
     }
 
-    function sanitizeFilename(name) {
-      return (
-        String(name)
-          .replace(/[/\\?%*:|"<>]/g, '-')
-          .replace(/\s+/g, ' ')
-          .trim() || 'video_output'
-      );
-    }
+    // Removed sanitizeFilename function as we now use Video ID for folder names
 
     /** Metadata Gemini theo URL (callback downloadTranscript) — ghi vào video-meta.json sau render */
     const geminiByUrl = {};
 
-    /** Thư mục cho 1 video: destFolder/<title gốc đã sanitize> (tránh trùng tên) */
-    function resolveVideoOutputDir(originalTitle) {
-      let base = sanitizeFilename(originalTitle || 'video');
-      let dir = path.join(destFolder, base);
-      if (!fs.existsSync(dir)) return dir;
-      let n = 2;
-      while (fs.existsSync(path.join(destFolder, `${base}_${n}`))) n += 1;
-      return path.join(destFolder, `${base}_${n}`);
+    /** Thư mục cho 1 video: destFolder/<videoID> */
+    function resolveVideoOutputDir(videoId) {
+      const base = videoId || 'unknown_id';
+      const dir = path.join(destFolder, base);
+      return dir;
     }
 
     // Luống bắt đầu batch -> Clean folder outputs
@@ -748,8 +816,19 @@ async function main(options = {}) {
         },
       });
       if (result) {
+        const videoId = result.metadata?.id || 'unknown_id';
+        const perVideoDir = resolveVideoOutputDir(videoId);
+
         try {
-          await processOne(background, { logoPath: batchChannelLogoPath });
+          await processOne(background, {
+            logoPath: batchChannelLogoPath,
+            perVideoDir,
+            originalTitle: result.title,
+            description: result.description,
+            tags: result.tags,
+            url,
+            geminiByUrl
+          });
           console.log(`ĐÃ HOÀN THÀNH VIDEO CHÍNH: ${url}`);
 
           const audioPath = getAudioFile();
@@ -779,42 +858,9 @@ async function main(options = {}) {
             }
           }
 
-          // Mỗi video: folder theo title gốc (YouTube) — video.mp4, thumbnail.*, video-meta.json
+          // Folder creation and metadata saving moved inside processOne
           if (fs.existsSync(finalVideoPath)) {
-            const originalTitle = result.title || '';
-            const perVideoDir = resolveVideoOutputDir(originalTitle);
-            fs.mkdirSync(perVideoDir, { recursive: true });
-
-            const destVideoPath = path.join(perVideoDir, 'video.mp4');
-            fs.copyFileSync(finalVideoPath, destVideoPath);
-            console.log(`\n>>> Đã xuất video: ${destVideoPath}`);
-
-            if (fs.existsSync(DOWNLOADS_DIR)) {
-              const downloadFiles = fs.readdirSync(DOWNLOADS_DIR);
-              const thumbFile = downloadFiles.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
-              if (thumbFile) {
-                const thumbExt = path.extname(thumbFile);
-                const thumbDestPath = path.join(perVideoDir, `thumbnail${thumbExt}`);
-                fs.copyFileSync(path.join(DOWNLOADS_DIR, thumbFile), thumbDestPath);
-                console.log(`>>> Đã copy thumbnail: ${thumbDestPath}`);
-              } else {
-                console.log(`>>> Không tìm thấy thumbnail (.jpg/.webp...) trong downloads.`);
-              }
-            }
-
-            const ytTags = Array.isArray(result.tags) ? result.tags.join(', ') : result.tags || '';
-            const gem = geminiByUrl[url] || {};
-            const metaPayload = {
-              title: originalTitle,
-              description: result.description || '',
-              tags: ytTags,
-              titleGemini: gem.title || '',
-              descriptionGemini: gem.description || '',
-              tagsGemini: gem.tags || '',
-            };
-            const metaPath = path.join(perVideoDir, 'video-meta.json');
-            fs.writeFileSync(metaPath, JSON.stringify(metaPayload, null, 2), 'utf8');
-            console.log(`>>> Đã lưu metadata: ${metaPath}`);
+            // No changes needed here, logic is now in processOne
           } else {
             console.error(`\n>>> Lỗi: Không tìm thấy file video đầu ra ${finalVideoPath}`);
           }
