@@ -148,7 +148,7 @@ async function main() {
     const result = await getChannelInfo(url);
 
     // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
-    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'STATUS', 'BACKGROUND VIDEO', 'OUTRO VIDEO', 'OUTRO TIME'];
+    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'STATUS', 'BACKGROUND VIDEO', 'START FROM'];
     const videoLinks = [...(result.video_links || [])].reverse();
 
     const channelName = result.name || '';
@@ -172,65 +172,101 @@ async function main() {
     const channelDir = path.join(DEFAULT_OUTPUT_DIR, excelFilename);
     const outputExcelPath = path.join(channelDir, `${excelFilename}.xlsx`);
 
+    let workbook;
+    let sheet;
+    let startRowIndex = 2;
+
     if (fs.existsSync(outputExcelPath)) {
-      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${excelFilename}/${excelFilename}.xlsx) BỎ QUA.\n`);
-      return;
+      console.log(`\nFILE EXCEL CHO KÊNH NÀY ĐÃ TỒN TẠI! (${excelFilename}/${excelFilename}.xlsx) Đang kiểm tra video mới...`);
+      workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.readFile(outputExcelPath);
+      sheet = workbook.worksheets[0];
+
+      const headerRow = sheet.getRow(1);
+      const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
+      if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO trong file hiện tại.');
+
+      const existingUrls = new Set();
+      for (let i = 2; i <= sheet.rowCount; i++) {
+        const row = sheet.getRow(i);
+        const rawVal = row.getCell(videoIdx).value;
+        const val =
+          rawVal && typeof rawVal === 'object' ? String(rawVal.text || rawVal.hyperlink || '').trim() : String(rawVal || '').trim();
+        if (val) existingUrls.add(val);
+      }
+
+      const newVideos = videoLinks.filter(v => {
+        const url = typeof v === 'string' ? v : v?.url || '';
+        return url && !existingUrls.has(url);
+      });
+
+      if (newVideos.length === 0) {
+        console.log('Không có video mới nào. Kết thúc.');
+        return;
+      }
+
+      console.log(`Tìm thấy ${newVideos.length} video mới. Đang thêm vào cuối file...`);
+      startRowIndex = sheet.rowCount + 1;
+      newVideos.forEach(video => {
+        const url = typeof video === 'string' ? video : video?.url || '';
+        sheet.addRow(['', '', '', url, '', '', '']);
+      });
+    } else {
+      const rows =
+        videoLinks.length > 0
+          ? videoLinks.map((video, i) => {
+              const url = typeof video === 'string' ? video : video?.url || '';
+              return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', ''];
+            })
+          : [['', channelName, channelTagsStr, '(Không có video)', '', '', '']];
+
+      if (!fs.existsSync(channelDir)) {
+        fs.mkdirSync(channelDir, { recursive: true });
+      }
+
+      workbook = new ExcelJS.Workbook();
+      sheet = workbook.addWorksheet('Kênh YouTube', { views: [{ state: 'frozen', ySplit: 1 }] });
+      sheet.addRow(headers);
+      rows.forEach(row => sheet.addRow(row));
+
+      // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO | STATUS | BACKGROUND VIDEO | START FROM
+      sheet.columns = [
+        { width: 25 }, // EMAIL
+        { width: 28 }, // CHANNEL NAME
+        { width: 20 }, // CHANNEL TAGS
+        { width: 50 }, // LINK VIDEO
+        { width: 22 }, // STATUS
+        { width: 22 }, // BACKGROUND VIDEO
+        { width: 15 }, // START FROM
+      ];
     }
 
-    const rows =
-      videoLinks.length > 0
-        ? videoLinks.map((video, i) => {
-            const url = typeof video === 'string' ? video : video?.url || '';
-            return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', '', ''];
-          })
-        : [['', channelName, channelTagsStr, '(Không có video)', '', '', '', '']];
-
-    if (!fs.existsSync(channelDir)) {
-      fs.mkdirSync(channelDir, { recursive: true });
-    }
-
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Kênh YouTube', { views: [{ state: 'frozen', ySplit: 1 }] });
-    sheet.addRow(headers);
-    rows.forEach(row => sheet.addRow(row));
-
-    // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO | STATUS | BACKGROUND VIDEO | OUTRO VIDEO | OUTRO TIME
-    sheet.columns = [
-      { width: 25 }, // EMAIL
-      { width: 28 }, // CHANNEL NAME
-      { width: 20 }, // CHANNEL TAGS
-      { width: 50 }, // LINK VIDEO
-      { width: 22 }, // STATUS
-      { width: 22 }, // BACKGROUND VIDEO
-      { width: 22 }, // OUTRO VIDEO
-      { width: 15 }, // OUTRO TIME
-    ];
-
-    // Thêm dropdown cho cột Background Video (cột F)
+    // Thêm hoặc cập nhật data validation cho tất cả các dòng dữ liệu (cả cũ và mới)
     const backgroundsDir = path.join(__dirname, '..', 'backgrounds');
     let bgOptions = [];
     if (fs.existsSync(backgroundsDir)) {
       bgOptions = fs.readdirSync(backgroundsDir).filter(f => fs.statSync(path.join(backgroundsDir, f)).isDirectory());
     }
-    if (bgOptions.length > 0) {
-      const bgFormula = `"${bgOptions.join(',')}"`;
-      for (let i = 2; i <= sheet.rowCount; i++) {
+
+    const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
+
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      // Dropdown STATUS (cột E - index 5)
+      sheet.getCell(`E${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [listFormula],
+      };
+
+      // Dropdown Background Video (cột F - index 6)
+      if (bgOptions.length > 0) {
+        const bgFormula = `"${bgOptions.join(',')}"`;
         sheet.getCell(`F${i}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           formulae: [bgFormula],
         };
       }
-    }
-
-    // Thêm dropdown cho cột STATUS (cột E): "" | "Đã tạo video" | "Đã đăng video"
-    const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
-    for (let i = 2; i <= sheet.rowCount; i++) {
-      sheet.getCell(`E${i}`).dataValidation = {
-        type: 'list',
-        allowBlank: true,
-        formulae: [listFormula],
-      };
     }
 
     await workbook.xlsx.writeFile(outputExcelPath);
