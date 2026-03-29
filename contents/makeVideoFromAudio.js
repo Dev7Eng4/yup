@@ -21,9 +21,6 @@ const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
-/** Giới hạn số lượng video xử lý tối đa trong 1 lần chạy batch */
-const BATCH_LIMIT = 10;
-
 /**
  * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
  * - < 25 phút: 15
@@ -108,27 +105,6 @@ const SUB_PADDING_HORIZONTAL = 40;
 
 /** Khoảng cách giữa các ký tự (ASS Spacing, pixel) — tăng nếu chữ vẫn sát */
 const SUBTITLE_CHAR_SPACING = 2;
-
-const DATA_FILE_PATHS = [
-  path.join(ROOT, 'channels', '*', 'output.xlsx'), // Check all subfolders
-  path.join(ROOT, 'channels', '*', 'output.csv'),
-  path.join(ROOT, 'channels', 'output.xlsx'),
-  path.join(ROOT, 'channels', 'output.csv'),
-  path.join(ROOT, 'output.xlsx'),
-  path.join(ROOT, 'output.csv'),
-];
-
-/**
- * Helper to find the first existing data file, supporting glob-like patterns for subdirectories
- */
-async function findDataFile() {
-  const glob = (await import('glob')).default;
-  for (const pattern of DATA_FILE_PATHS) {
-    const files = glob.sync(pattern.replace(/\\/g, '/'));
-    if (files.length > 0) return files[0];
-  }
-  return null;
-}
 
 /**
  * Lấy duration (giây) của file media bằng ffprobe
@@ -351,88 +327,6 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
       'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.'
     );
   }
-}
-
-/**
- * Đọc file Excel/CSV và lấy danh sách URL từ cột Video
- */
-async function readVideoUrlsFromFile(inputFile = null) {
-  let filePath = inputFile;
-  if (!filePath) {
-    const glob = (await import('glob')).default;
-    for (const pattern of DATA_FILE_PATHS) {
-      const files = glob.sync(pattern.replace(/\\/g, '/'));
-      if (files.length > 0) {
-        filePath = files[0];
-        break;
-      }
-    }
-  }
-
-  if (!filePath) {
-    throw new Error(`Không tìm thấy file output. Cần tạo từ "Lấy thông tin YouTube" trước.`);
-  }
-
-  if (filePath.endsWith('.xlsx')) {
-    const ExcelJS = (await import('exceljs')).default;
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(filePath);
-    const sheet = workbook.worksheets[0];
-    if (!sheet || sheet.rowCount < 2) throw new Error('File Excel không có dữ liệu.');
-    const headerRow = sheet.getRow(1);
-    const videoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'link video');
-    if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO.');
-    const trangThaiIdx = headerRow.values.findIndex(v =>
-      String(v || '')
-        .toLowerCase()
-        .includes('status')
-    );
-    const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
-    const items = [];
-    for (let i = 2; i <= sheet.rowCount; i++) {
-      const row = sheet.getRow(i);
-      if (trangThaiIdx >= 0) {
-        const trangThai = String(row.getCell(trangThaiIdx).value || '').trim();
-        if (trangThai) continue;
-      }
-      const rawVal = row.getCell(videoIdx).value;
-      const val = rawVal && typeof rawVal === 'object' ? String(rawVal.text || rawVal.hyperlink || '').trim() : String(rawVal || '').trim();
-      const bgVal = bgIdx >= 0 ? String(row.getCell(bgIdx).value || '').trim() : 'cat';
-      if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-        items.push({
-          url: val,
-          background: bgVal || 'cat',
-        });
-      }
-    }
-    return items;
-  }
-
-  const content = fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '');
-  const lines = content.split('\n').filter(l => l.trim());
-  if (lines.length < 2) throw new Error('File CSV không có dữ liệu.');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  const videoIdx = headers.findIndex(h => h.toLowerCase() === 'link video');
-  if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO trong CSV.');
-  const trangThaiIdx = headers.findIndex(h => h.toLowerCase().includes('status'));
-  const bgIdx = headers.findIndex(h => h.toLowerCase() === 'background video');
-  const items = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-    if (trangThaiIdx >= 0) {
-      const trangThai = (cells[trangThaiIdx] || '').trim();
-      if (trangThai) continue;
-    }
-    const val = cells[videoIdx] || '';
-    const bgVal = bgIdx >= 0 ? (cells[bgIdx] || '').trim() : 'cat';
-    if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
-      items.push({
-        url: val,
-        background: bgVal || 'cat',
-      });
-    }
-  }
-  return items;
 }
 
 /**
@@ -714,7 +608,7 @@ async function main(options = {}) {
   const mode = options.mode || 'single';
   const backgroundName = options.background || 'cat';
   const inputFile = options.inputFile || null;
-  const batchLimit = options.batchLimit || BATCH_LIMIT;
+  const batchLimit = options.batchLimit;
 
   if (mode === 'single') {
     if (!fs.existsSync(DOWNLOADS_DIR)) {
@@ -731,21 +625,26 @@ async function main(options = {}) {
   }
 
   if (mode === 'batch') {
-    let items = await readVideoUrlsFromFile(inputFile);
-    if (items.length === 0) {
-      throw new Error('Không có link video nào trong CSV/Excel.');
+    let items = options.items;
+    if (!items || items.length === 0) {
+      const { readVideoUrlsFromFile } = await import('./scripts/runBatchVideo.js');
+      items = await readVideoUrlsFromFile(inputFile);
+      if (items.length === 0) {
+        throw new Error('Không có link video nào trong CSV/Excel.');
+      }
+      if (items.length > batchLimit) {
+        console.log(`\t> Giới hạn tối đa ${batchLimit} video per batch, bỏ qua ${items.length - batchLimit} link còn lại.`);
+        items = items.slice(0, batchLimit);
+      }
+      console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
     }
-    if (items.length > batchLimit) {
-      console.log(`\t> Giới hạn tối đa ${batchLimit} video per batch, bỏ qua ${items.length - batchLimit} link còn lại.`);
-      items = items.slice(0, batchLimit);
-    }
-    console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
     const { downloadSingleVideo } = await import('./downloadVideo.js');
 
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
     let actualInputFile = inputFile;
     if (!actualInputFile) {
+      const { findDataFile } = await import('./scripts/runBatchVideo.js');
       actualInputFile = await findDataFile();
     }
     let destFolder = path.join(ROOT, 'channels');
