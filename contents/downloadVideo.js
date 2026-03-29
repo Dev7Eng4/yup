@@ -9,7 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { detectVideoLang, getLanguageOptions } from './utils/detectLanguage.util.js';
 
-import { VIDEO_TYPE } from './constants/index.js';
+import { MAKE_VIDEO_MODE } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, '..', 'downloads');
@@ -141,7 +141,7 @@ async function downloadThumbnail(url, options = {}) {
  */
 async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
   const { cleanSrt } = await import('./cleanSrt.js');
-  const { updateContentWithGemini } = await import('./updateContentWithGemini.js');
+  const { updateContentWithGemini } = await import('./updateContentWithGemini2CH.js');
 
   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
   for (const file of vttFiles) {
@@ -294,7 +294,7 @@ async function downloadAudio(url, options = {}) {
  * @returns {Promise<{title: string} | null>} - Thông tin video nếu thành công, null nếu lỗi
  */
 async function downloadSingleVideo(url, options = {}) {
-  const { callback, mode = VIDEO_TYPE.REUP_FULL } = options;
+  const { callback, mode = MAKE_VIDEO_MODE.REUP_FULL } = options;
   if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
     fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
   } else {
@@ -312,7 +312,7 @@ async function downloadSingleVideo(url, options = {}) {
   try {
     const result = await getVideoInfo(url);
     await downloadThumbnail(url, { outputDir: DEFAULT_OUTPUT_DIR });
-    if (mode === VIDEO_TYPE.FROM_AUDIO) {
+    if (mode === MAKE_VIDEO_MODE.FROM_AUDIO) {
       await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
     } else {
       await downloadVideo(url, { outputDir: DEFAULT_OUTPUT_DIR });
@@ -320,7 +320,7 @@ async function downloadSingleVideo(url, options = {}) {
 
     try {
       await downloadTranscript(url, {
-        updateTranscript: mode === VIDEO_TYPE.FROM_AUDIO,
+        updateTranscript: mode === MAKE_VIDEO_MODE.FROM_AUDIO,
         outputDir: DEFAULT_OUTPUT_DIR,
         videoTitle: result.title,
         description: result.description,

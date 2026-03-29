@@ -2,8 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { VIDEO_TYPE } from './constants/index.js';
-
+import { MAKE_VIDEO_MODE } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -225,7 +224,7 @@ async function main(options = {}) {
       console.log(`\n[${i + 1}/${items.length}] ${url} (Remake Full)`);
 
       const result = await downloadSingleVideo(url, {
-        mode: VIDEO_TYPE.REUP_FULL, // Tải cả video
+        mode: MAKE_VIDEO_MODE.REUP_FULL, // Tải cả video
         callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
           const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
           geminiByUrl[url] = {

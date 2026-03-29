@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..', '..');
 const CHANNELS_DIR = path.join(ROOT, 'channels');
 
-const BATCH_LIMIT = 10;
+const BATCH_LIMIT = 20;
 
 const DATA_FILE_PATHS = [
   path.join(ROOT, 'channels', '*', 'output.xlsx'),
@@ -51,7 +51,7 @@ export async function readVideoUrlsFromFile(inputFile = null) {
     const trangThaiIdx = headerRow.values.findIndex(v =>
       String(v || '')
         .toLowerCase()
-        .includes('status')
+        .includes('status'),
     );
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
     const startIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'start from');
@@ -148,7 +148,7 @@ export async function readVideoUrlsFromFile(inputFile = null) {
 }
 
 async function main(props = {}) {
-  const { VIDEO_TYPE } = await import('../constants/index.js');
+  const { MAKE_VIDEO_MODE } = await import('../constants/index.js');
   let type = props.videoType;
 
   if (!type) {
@@ -159,8 +159,8 @@ async function main(props = {}) {
         name: 'videoType',
         message: 'Chọn loại video muốn tạo:',
         choices: [
-          { name: 'Tạo từ Audio (Ghép nền ngẫu nhiên)', value: VIDEO_TYPE.FROM_AUDIO },
-          { name: 'Reup Full (Thêm overlay ảnh/video)', value: VIDEO_TYPE.REUP_FULL },
+          { name: 'Tạo từ Audio (Ghép nền ngẫu nhiên)', value: MAKE_VIDEO_MODE.FROM_AUDIO },
+          { name: 'Reup Full (Thêm overlay ảnh/video)', value: MAKE_VIDEO_MODE.REUP_FULL },
         ],
       },
     ]);
@@ -221,10 +221,10 @@ async function main(props = {}) {
   }
   console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
-  if (type === VIDEO_TYPE.FROM_AUDIO) {
+  if (type === MAKE_VIDEO_MODE.FROM_AUDIO) {
     const { default: makeVideoFromAudio } = await import('../makeVideoFromAudio.js');
     await makeVideoFromAudio({ mode: 'batch', inputFile, items, batchLimit: BATCH_LIMIT });
-  } else if (type === VIDEO_TYPE.REUP_FULL) {
+  } else if (type === MAKE_VIDEO_MODE.REUP_FULL) {
     const { default: makeVideoFromFull } = await import('../makeVideoFromFull.js');
     await makeVideoFromFull({ mode: 'batch', inputFile, items, batchLimit: BATCH_LIMIT });
   }
@@ -238,4 +238,3 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 }
 
 export default main;
-

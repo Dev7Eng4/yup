@@ -14,8 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
-import { VIDEO_TYPE } from './constants/index.js';
-
+import { MAKE_VIDEO_MODE } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -501,7 +500,8 @@ async function processOne(bgNameArg, options = {}) {
   const videoToScale = `[0:v]${scaleFilter}[vpadded]`;
   const videoEncode = '-c:v libx264 -crf 28 -preset medium -c:a aac -b:a 128k';
   const logoPathForMerge = options.logoPath != null ? options.logoPath : LOGO_PATH;
-  const hasLogo = fs.existsSync(logoPathForMerge);
+  // const hasLogo = fs.existsSync(logoPathForMerge);
+  const hasLogo = false;
 
   const buildLogoOverlay = inputLabel => {
     if (!hasLogo) return inputLabel;
@@ -687,7 +687,7 @@ async function main(options = {}) {
       console.log(`\n[${i + 1}/${items.length}] ${url} (Background: ${background})`);
 
       const result = await downloadSingleVideo(url, {
-        mode: VIDEO_TYPE.FROM_AUDIO,
+        mode: MAKE_VIDEO_MODE.FROM_AUDIO,
         callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
           const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
           geminiByUrl[url] = {

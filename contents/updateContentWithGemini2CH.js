@@ -5,11 +5,7 @@
 
 import { openChromeProfile } from './makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
-import {
-  createPromptReCreateTitleVideo,
-  createPromptReCreateDescriptionVideo,
-  createPromptReCreateTagsVideo,
-} from './promts/createVideoInfo.js';
+import { createPromptToCreateSummaryContent, createPromptToCreateMetaInfo } from './promts/createMeta2ch.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -101,21 +97,59 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
  * Trên cùng một tab Gemini: title → description → tags (createVideoInfo).
  */
 async function runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr }) {
-  console.log('\n--- Gemini: tiêu đề → mô tả → tags (tuần tự) ---');
+  console.log('\n--- Gemini 2ch: tóm tắt cuốn chiếu (500 cues/lần) → metadata tổng hợp ---');
   await page.waitForTimeout(1500);
 
-  const newTitle = await sendPromptToPage(page, createPromptReCreateTitleVideo(title, srtContent), 'tiêu đề video');
-  await page.waitForTimeout(1500);
+  // 1. Tách cues từ srtContent
+  const cues = srtContent
+    .split(/\n\n+/)
+    .map(c => c.trim())
+    .filter(Boolean);
 
-  const newDescription = await sendPromptToPage(page, createPromptReCreateDescriptionVideo(newTitle.trim(), description), 'mô tả video');
-  await page.waitForTimeout(1500);
+  const CHUNK_SIZE_SUMMARY = 500;
+  const summaries = [];
+  let lastSummary = '「物語の始まり」';
+  const totalChunks = Math.ceil(cues.length / CHUNK_SIZE_SUMMARY);
 
-  const newTags = await sendPromptToPage(page, createPromptReCreateTagsVideo(newTitle.trim(), tagsStr), 'tags video');
+  // 2. Tóm tắt từng phần (iterative summary)
+  for (let i = 0; i < cues.length; i += CHUNK_SIZE_SUMMARY) {
+    const chunk = cues.slice(i, i + CHUNK_SIZE_SUMMARY).join('\n\n');
+    const chunkIndex = Math.floor(i / CHUNK_SIZE_SUMMARY) + 1;
+
+    console.log(`Đang tóm tắt phần ${chunkIndex}/${totalChunks}...`);
+
+    const prompt = createPromptToCreateSummaryContent(chunk, lastSummary);
+    const result = await sendPromptToPage(page, prompt, `tóm tắt phần ${chunkIndex}/${totalChunks}`);
+
+    const cleanResult = result.trim();
+    summaries.push(cleanResult);
+    lastSummary = cleanResult; // Lưu lại để làm context cho phần tiếp theo
+
+    if (i + CHUNK_SIZE_SUMMARY < cues.length) {
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  // 3. Ghép các bản tóm tắt lại thành một summary tổng thể
+  const finalSummaryForMeta = summaries.join('\n');
+  console.log('\nĐang tạo metadata từ bản tóm tắt tổng hợp...');
+
+  // 4. Tạo metadata tổng hợp từ summary cuối cùng
+  const metaRaw = await sendPromptToPage(
+    page,
+    createPromptToCreateMetaInfo(title, finalSummaryForMeta),
+    'metadata video (title, desc, tags)',
+  );
+
+  // 5. Parse kết quả
+  const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);
+  const descMatch = metaRaw.match(/【動画説明文】\s*([\s\S]*?)(?=\n\n?【|$)/);
+  const tagsMatch = metaRaw.match(/【タグ】\s*([\s\S]*?)(?=\n\n?【|$)/);
 
   return {
-    title: newTitle.trim(),
-    description: newDescription.trim(),
-    tags: newTags.trim(),
+    title: titleMatch ? titleMatch[1].trim() : title,
+    description: descMatch ? descMatch[1].trim() : '',
+    tags: tagsMatch ? tagsMatch[1].trim() : '',
   };
 }
 
@@ -128,6 +162,7 @@ async function internalUpdateVideoMeta(page, options = {}) {
 
   await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
   const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr });
+  console.log('🚀 ~ internalUpdateVideoMeta ~ meta:', meta);
   return meta;
 }
 
