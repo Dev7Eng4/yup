@@ -14,7 +14,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
-import { VIDEO_MODE } from './downloadVideo.js';
+import { VIDEO_TYPE } from './constants/index.js';
+
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -291,7 +292,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-preset',
     'medium',
     '-an',
-    outputPath
+    outputPath,
   );
 
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
@@ -312,19 +313,19 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
   const pctLonger = ((1 / atempo - 1) * 100).toFixed(1);
   console.log(
     `Đang chỉnh tempo (atempo=${atempo}: chậm hơn → dài hơn ~${pctLonger}%; dự kiến ~${formatClockDuration(
-      expectedAfter
-    )} / ${expectedAfter.toFixed(1)}s)...`
+      expectedAfter,
+    )} / ${expectedAfter.toFixed(1)}s)...`,
   );
   execSync(`ffmpeg -y -i "${sourcePath}" -filter:a "atempo=${atempo}" -c:a aac -b:a 192k "${destPath}"`, { stdio: 'inherit' });
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
     `Sau atempo: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
-      1
-    )}s) | ffprobe dự kiến ~${expectedAfter.toFixed(1)}s`
+      1,
+    )}s) | ffprobe dự kiến ~${expectedAfter.toFixed(1)}s`,
   );
   if (durAfter < durBefore - 0.5) {
     console.warn(
-      'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.'
+      'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.',
     );
   }
 }
@@ -463,8 +464,8 @@ async function processOne(bgNameArg, options = {}) {
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
     `Thời lượng audio sau atempo=${AUDIO_ATEMPO} (ffprobe, dùng cho nền + merge): ${formatClockDuration(
-      audioDurationAfterTempo
-    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`
+      audioDurationAfterTempo,
+    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
   );
   console.log(`Stock videos: ${videoPaths.map(p => path.basename(p)).join(', ')}`);
 
@@ -485,8 +486,8 @@ async function processOne(bgNameArg, options = {}) {
     const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
       `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
-        1
-      )}s)...`
+        1,
+      )}s)...`,
     );
   } else {
     console.log('Đang tạo nền stock (1 clip, loop nếu clip ngắn hơn audio)...');
@@ -531,7 +532,7 @@ async function processOne(bgNameArg, options = {}) {
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      }
+      },
     );
     fs.unlinkSync(tempSubPath);
   } else {
@@ -549,7 +550,7 @@ async function processOne(bgNameArg, options = {}) {
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      }
+      },
     );
   }
 
@@ -579,13 +580,13 @@ async function processOne(bgNameArg, options = {}) {
     }
 
     // Đợi 1 chút để Gemini callback có thời gian cập nhật (nếu đang chạy song song)
-    let gem = (geminiByUrl && url) ? geminiByUrl[url] : {};
+    let gem = geminiByUrl && url ? geminiByUrl[url] : {};
     if (!gem || !gem.title) {
-        await new Promise(r => setTimeout(r, 2000));
-        gem = (geminiByUrl && url) ? geminiByUrl[url] : {};
+      await new Promise(r => setTimeout(r, 2000));
+      gem = geminiByUrl && url ? geminiByUrl[url] : {};
     }
 
-    const ytTagsStr = Array.isArray(tags) ? tags.join(', ') : (tags || '');
+    const ytTagsStr = Array.isArray(tags) ? tags.join(', ') : tags || '';
     const metaPayload = {
       title: originalTitle || '',
       description: description || '',
@@ -608,7 +609,6 @@ async function main(options = {}) {
   const mode = options.mode || 'single';
   const backgroundName = options.background || 'cat';
   const inputFile = options.inputFile || null;
-  const batchLimit = options.batchLimit;
 
   if (mode === 'single') {
     if (!fs.existsSync(DOWNLOADS_DIR)) {
@@ -625,28 +625,16 @@ async function main(options = {}) {
   }
 
   if (mode === 'batch') {
-    let items = options.items;
-    if (!items || items.length === 0) {
-      const { readVideoUrlsFromFile } = await import('./scripts/runBatchVideo.js');
-      items = await readVideoUrlsFromFile(inputFile);
-      if (items.length === 0) {
-        throw new Error('Không có link video nào trong CSV/Excel.');
-      }
-      if (items.length > batchLimit) {
-        console.log(`\t> Giới hạn tối đa ${batchLimit} video per batch, bỏ qua ${items.length - batchLimit} link còn lại.`);
-        items = items.slice(0, batchLimit);
-      }
-      console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
+    const items = options.items || [];
+    if (items.length === 0) {
+      console.log('Không có items để xử lý batch.');
+      return;
     }
 
     const { downloadSingleVideo } = await import('./downloadVideo.js');
 
     // Tìm file thực tế được dùng để lấy thư mục đích (folder channel)
-    let actualInputFile = inputFile;
-    if (!actualInputFile) {
-      const { findDataFile } = await import('./scripts/runBatchVideo.js');
-      actualInputFile = await findDataFile();
-    }
+    const actualInputFile = inputFile;
     let destFolder = path.join(ROOT, 'channels');
     if (actualInputFile) {
       destFolder = path.dirname(actualInputFile);
@@ -668,12 +656,10 @@ async function main(options = {}) {
       console.log(`Logo kênh (dùng cho mọi video batch): ${batchChannelLogoPath}`);
       if (channelLogoImages.length > 1) {
         console.warn(
-          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`
+          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`,
         );
       }
     }
-
-
 
     /** Metadata Gemini theo URL (callback downloadTranscript) — ghi vào video-meta.json sau render */
     const geminiByUrl = {};
@@ -701,7 +687,7 @@ async function main(options = {}) {
       console.log(`\n[${i + 1}/${items.length}] ${url} (Background: ${background})`);
 
       const result = await downloadSingleVideo(url, {
-        mode: VIDEO_MODE.AUDIO,
+        mode: VIDEO_TYPE.FROM_AUDIO,
         callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
           const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
           geminiByUrl[url] = {
@@ -724,7 +710,7 @@ async function main(options = {}) {
             description: result.description,
             tags: result.tags,
             url,
-            geminiByUrl
+            geminiByUrl,
           });
           console.log(`ĐÃ HOÀN THÀNH VIDEO: ${url}`);
 

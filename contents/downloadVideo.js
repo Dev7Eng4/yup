@@ -9,10 +9,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { detectVideoLang, getLanguageOptions } from './utils/detectLanguage.util.js';
 
-export const VIDEO_MODE = {
-  AUDIO: 'audio',
-  VIDEO: 'video',
-};
+import { VIDEO_TYPE } from './constants/index.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, '..', 'downloads');
 const INPUT_FILE = path.join(__dirname, '..', 'input.txt');
@@ -141,7 +139,7 @@ async function downloadThumbnail(url, options = {}) {
 /**
  * Pipeline VTT: cleanSrt → SRT → Gemini → ghi SRT + callback title/description/tags (không ghi file meta).
  */
-async function processVttTranscriptsWithGemini(url, outputDir, { videoTitle, description, tags, callback }) {
+async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
   const { cleanSrt } = await import('./cleanSrt.js');
   const { updateContentWithGemini } = await import('./updateContentWithGemini.js');
 
@@ -160,6 +158,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { videoTitle, des
 
     try {
       const geminiOut = await updateContentWithGemini(content, {
+        updateTranscript,
         title: videoTitle,
         description,
         tags,
@@ -198,7 +197,15 @@ async function processVttTranscriptsWithGemini(url, outputDir, { videoTitle, des
  * @param {(p: { url: string, title: string, description: string, tags: string }) => void | Promise<void>} [options.callback] - Sau khi Gemini trả title/description/tags (video ngắn)
  */
 async function downloadTranscript(url, options = {}) {
-  const { outputDir = DEFAULT_OUTPUT_DIR, subFormat = 'vtt', videoTitle = '', description = '', tags = [], callback } = options;
+  const {
+    updateTranscript = true,
+    outputDir = DEFAULT_OUTPUT_DIR,
+    subFormat = 'vtt',
+    videoTitle = '',
+    description = '',
+    tags = [],
+    callback,
+  } = options;
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   const outputTemplate = path.join(outputDir, '%(title)s-%(id)s.%(ext)s');
@@ -233,7 +240,7 @@ async function downloadTranscript(url, options = {}) {
   if (lastErr) throw lastErr;
 
   if (targetFormat === 'vtt') {
-    await processVttTranscriptsWithGemini(url, outputDir, { videoTitle, description, tags, callback });
+    await processVttTranscriptsWithGemini(url, outputDir, { updateTranscript, videoTitle, description, tags, callback });
   }
 
   console.log('Tải transcript xong!');
@@ -287,7 +294,7 @@ async function downloadAudio(url, options = {}) {
  * @returns {Promise<{title: string} | null>} - Thông tin video nếu thành công, null nếu lỗi
  */
 async function downloadSingleVideo(url, options = {}) {
-  const { callback, mode = VIDEO_MODE.VIDEO } = options;
+  const { callback, mode = VIDEO_TYPE.REUP_FULL } = options;
   if (!fs.existsSync(DEFAULT_OUTPUT_DIR)) {
     fs.mkdirSync(DEFAULT_OUTPUT_DIR, { recursive: true });
   } else {
@@ -304,14 +311,16 @@ async function downloadSingleVideo(url, options = {}) {
 
   try {
     const result = await getVideoInfo(url);
-    console.log('🚀 ~ downloadSingleVideo ~ result:', result);
-    if (mode !== VIDEO_MODE.AUDIO) {
+    await downloadThumbnail(url, { outputDir: DEFAULT_OUTPUT_DIR });
+    if (mode === VIDEO_TYPE.FROM_AUDIO) {
+      await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
+    } else {
       await downloadVideo(url, { outputDir: DEFAULT_OUTPUT_DIR });
     }
-    await downloadThumbnail(url, { outputDir: DEFAULT_OUTPUT_DIR });
-    await downloadAudio(url, { outputDir: DEFAULT_OUTPUT_DIR });
+
     try {
       await downloadTranscript(url, {
+        updateTranscript: mode === VIDEO_TYPE.FROM_AUDIO,
         outputDir: DEFAULT_OUTPUT_DIR,
         videoTitle: result.title,
         description: result.description,
@@ -320,6 +329,12 @@ async function downloadSingleVideo(url, options = {}) {
       });
     } catch (err) {
       console.warn('Không tải được transcript:', err.message);
+    }
+
+    // Sau khi tải xong, tìm file thực tế trong folder downloads để trả về filePath chính xác
+    const files = fs.readdirSync(DEFAULT_OUTPUT_DIR).filter(f => /\.(mp4|m4a|mp3|mkv|mov|avi|webm)$/i.test(f));
+    if (files.length > 0) {
+      result.filePath = path.join(DEFAULT_OUTPUT_DIR, files[0]);
     }
     return result;
   } catch (err) {

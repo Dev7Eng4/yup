@@ -100,21 +100,21 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
 /**
  * Trên cùng một tab Gemini: title → description → tags (createVideoInfo).
  */
-async function runGeminiVideoMetaPrompts(page, { title, srtOut, description, tagsStr }) {
+async function runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr }) {
   console.log('\n--- Gemini: tiêu đề → mô tả → tags (tuần tự) ---');
   await page.waitForTimeout(1500);
 
-  const newTitle = await sendPromptToPage(page, createPromptReCreateTitleVideo(title, srtOut), 'tiêu đề video (JP)');
+  const newTitle = await sendPromptToPage(page, createPromptReCreateTitleVideo(title, srtContent), 'tiêu đề video');
   await page.waitForTimeout(1500);
 
   const newDescription = await sendPromptToPage(
     page,
     createPromptReCreateDescriptionVideo(newTitle.trim(), description),
-    'mô tả video (JP)',
+    'mô tả video',
   );
   await page.waitForTimeout(1500);
 
-  const newTags = await sendPromptToPage(page, createPromptReCreateTagsVideo(newTitle.trim(), tagsStr), 'tags video (JP)');
+  const newTags = await sendPromptToPage(page, createPromptReCreateTagsVideo(newTitle.trim(), tagsStr), 'tags video');
 
   return {
     title: newTitle.trim(),
@@ -124,25 +124,28 @@ async function runGeminiVideoMetaPrompts(page, { title, srtOut, description, tag
 }
 
 /**
- * Gửi prompt tới Gemini và nhận kết quả.
- * Áp dụng logic kép: Tuần tự cho <30 phút và Song song 5 tab cho >=30 phút.
- *
- * Trả về: { srt, title, description, tags } — luôn gọi createVideoInfo sau khi xử lý SRT (mọi độ dài).
+ * INTERNAL: Xử lý Meta (Title, Description, Tags) trên 1 page có sẵn
  */
-export async function updateContentWithGemini(rawSrtContent, options = {}) {
-  const { title = '', description = '', tags: tagsOpt = [] } = options;
+async function internalUpdateVideoMeta(page, options = {}) {
+  const { title = '', srtContent = '', description = '', tags: tagsOpt = [] } = options;
   const tagsStr = Array.isArray(tagsOpt) ? tagsOpt.join(', ') : String(tagsOpt || '');
 
+  await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr });
+  return meta;
+}
+
+/**
+ * INTERNAL: Xử lý Transcript SRT trên một context có sẵn
+ */
+async function internalUpdateTranscript(context, initialPage, rawSrtContent, options = {}) {
+  const { title = '' } = options;
+
   // Tách chunk từ file srt gốc
-  const cues =
-    typeof rawSrtContent === 'string'
-      ? rawSrtContent
-          .split(/\n\n+/)
-          .map(c => c.trim())
-          .filter(Boolean)
+  const cues = typeof rawSrtContent === 'string'
+      ? rawSrtContent.split(/\n\n+/).map(c => c.trim()).filter(Boolean)
       : rawSrtContent;
 
-  // Tính toán thời lượng video dự kiến bằng dòng mốc thời gian của cục srt cuối cùng
   const durationMin = getSrtDurationInMinutes(cues);
   console.log(`Độ dài video check được qua SRT cuối: ~${durationMin.toFixed(1)} phút`);
 
@@ -153,146 +156,124 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
   }
 
   const totalChunks = chunks.length;
+  const finalResults = new Array(totalChunks).fill(null);
 
-  console.log('Đang mở Chrome với profile đã lưu...');
-  const { context, page: initialPage } = await openChromeProfile({ visible: true });
+  if (durationMin < 30) {
+    console.log(`Video < 30 phút, Xử lý TUẦN TỰ trên 1 tab...`);
+    await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
-  try {
-    const finalResults = new Array(totalChunks).fill(null);
-
-    // KỊCH BẢN 1: VIDEO DƯỚI 30 PHÚT -> DÙNG CHUNG 1 TAB THEO KIỂU NỐI TIẾP CHAP
-    if (durationMin < 30) {
-      console.log(`Video < 30 phút, Xử lý TUẦN TỰ nối tiếp hội thoại trên 1 tab duy nhất...`);
-      await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-      for (let i = 0; i < totalChunks; i++) {
+    for (let i = 0; i < totalChunks; i++) {
         const chunk = chunks[i];
         let prompt = createPromptUpdateShortTranscript(title, chunk, `phần ${i + 1}/${totalChunks}`);
-
-        console.log(`\n--- Đang gửi tuần tự prompt phần ${i + 1}/${totalChunks} ---`);
         const result = await sendPromptToPage(initialPage, prompt, `phần ${i + 1}/${totalChunks}`);
         finalResults[i] = result;
+        if (i < totalChunks - 1) await initialPage.waitForTimeout(2000);
+    }
+  } else {
+    const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
+    console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
 
-        if (i < totalChunks - 1) {
-          await initialPage.waitForTimeout(2000); // nghỉ nhẹ trước khi gửi phần tiếp theo
-        }
-      }
+    const pages = [initialPage];
+    for (let i = 1; i < activeConcurrency; i++) {
+      pages.push(await context.newPage());
     }
 
-    // KỊCH BẢN 2: VIDEO TỪ 30 PHÚT TRỞ LÊN -> CHẠY LÔ BATCH PROMISE.ALL TỐI ĐA 5 TAB NHƯ CŨ
-    else {
-      const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
-      console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
-
-      const pages = [initialPage];
-      for (let i = 1; i < activeConcurrency; i++) {
-        pages.push(await context.newPage());
+    for (let batchStart = 0; batchStart < totalChunks; batchStart += activeConcurrency) {
+      const batchPromises = [];
+      const batchEnd = Math.min(batchStart + activeConcurrency, totalChunks);
+      for (let i = batchStart; i < batchEnd; i++) {
+        batchPromises.push(processChunkOnPage(pages[i - batchStart], chunks[i], i, totalChunks));
       }
+      const batchResults = await Promise.all(batchPromises);
+      for (const res of batchResults) finalResults[res.index] = res.result;
+    }
+    // Đóng bớt tab phụ của phần transcript
+    for (let i = 1; i < pages.length; i++) await pages[i].close();
+  }
 
-      for (let batchStart = 0; batchStart < totalChunks; batchStart += activeConcurrency) {
-        const batchPromises = [];
-        const batchEnd = Math.min(batchStart + activeConcurrency, totalChunks);
-
-        console.log(`\n=== Mở lô xử lý trực tuyến: từ phần ${batchStart + 1} đến ${batchEnd} / ${totalChunks} ===`);
-
-        for (let i = batchStart; i < batchEnd; i++) {
-          const pageIndex = i - batchStart;
-          const page = pages[pageIndex];
-          const chunk = chunks[i];
-
-          // Đẩy promise vào mảng chờ thực thi đồng thời
-          batchPromises.push(processChunkOnPage(page, chunk, i, totalChunks));
-        }
-
-        // Thực thi đồng thời tiến trình Promise All
-        const batchResults = await Promise.all(batchPromises);
-
-        for (const res of batchResults) {
-          finalResults[res.index] = res.result;
-        }
-
-        console.log(`=== Đã xong lô ${batchStart + 1} đến ${batchEnd}! ===`);
-        if (batchEnd < totalChunks) {
-          console.log(`Vẫn còn đoạn cần xử lý, tiếp tục phân lô để chờ...`);
-          // Bạn có thể chèn lại timeout 10s tại đây nếu cần
-          // await new Promise(resolve => setTimeout(resolve, 10000));
-        }
+  // Ghép nối SRT
+  let finalSrt = '';
+  for (let i = 0; i < chunks.length; i++) {
+    const processedChunk = finalResults[i];
+    if (processedChunk && processedChunk.trim() !== '') {
+      const origBlocks = chunks[i].split(/\n\n+/).map(b => b.trim()).filter(Boolean);
+      let procBlocks = processedChunk.replace(/```(srt)?/gi, '').split(/\n\n+/).map(b => b.trim()).filter(Boolean);
+      const procMap = {};
+      for (const pb of procBlocks) {
+        const lines = pb.split('\n');
+        const index = parseInt(lines[0].trim(), 10);
+        if (!isNaN(index) && lines.length >= 3) procMap[index] = lines.slice(2).join('\n');
       }
-
-      // Đóng bớt tab phụ
-      for (let i = 1; i < pages.length; i++) {
-        await pages[i].close();
+      const mergedBlocks = [];
+      for (const ob of origBlocks) {
+        const lines = ob.split('\n');
+        const index = parseInt(lines[0].trim(), 10);
+        if (!isNaN(index) && lines.length >= 3) {
+            if (procMap[index]) lines.splice(2, lines.length - 2, procMap[index]);
+        }
+        mergedBlocks.push(lines.join('\n'));
       }
+      finalSrt += mergedBlocks.join('\n\n') + '\n\n';
+    } else {
+      finalSrt += chunks[i] + '\n\n';
+    }
+  }
+  return finalSrt.trim();
+}
+
+/**
+ * Standalone xử lý Meta
+ */
+export async function updateVideoMetaWithGemini(options = {}) {
+  const { context, page } = await openChromeProfile({ visible: true });
+  try {
+    return await internalUpdateVideoMeta(page, options);
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Standalone xử lý Transcript
+ */
+export async function updateTranscriptWithGemini(rawSrtContent, options = {}) {
+  const { context, page: initialPage } = await openChromeProfile({ visible: true });
+  try {
+    return await internalUpdateTranscript(context, initialPage, rawSrtContent, options);
+  } finally {
+    await context.close();
+  }
+}
+
+/**
+ * Combined function hỗ trợ tham số updateTranscript
+ */
+export async function updateContentWithGemini(rawSrtContent, options = {}) {
+  const { updateTranscript = true } = options;
+
+  console.log('Đang mở Chrome để xử lý Gemini...');
+  const { context, page: transcriptPage } = await openChromeProfile({ visible: true });
+  const metaPage = await context.newPage();
+
+  try {
+    const promises = [];
+
+    // Chạy Transcript nếu yêu cầu
+    if (updateTranscript) {
+      promises.push(internalUpdateTranscript(context, transcriptPage, rawSrtContent, options));
+    } else {
+      console.log('Bỏ qua bước xử lý Transcript theo yêu cầu.');
+      promises.push(Promise.resolve(rawSrtContent));
+      await transcriptPage.close();
     }
 
-    // MAP THỜI GIAN THEO LÍP KIỂM TRA CHẶT CHẼ
-    let finalSrt = '';
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const processedChunk = finalResults[i];
+    // Luôn chạy Meta
+    promises.push(internalUpdateVideoMeta(metaPage, { 
+      ...options, 
+      srtContent: rawSrtContent 
+    }));
 
-      if (processedChunk && processedChunk.trim() !== '') {
-        const origBlocks = chunk
-          .split(/\n\n+/)
-          .map(b => b.trim())
-          .filter(Boolean);
-        let procBlocks = processedChunk
-          .replace(/```(srt)?/gi, '')
-          .split(/\n\n+/)
-          .map(b => b.trim())
-          .filter(Boolean);
-
-        const procMap = {};
-        for (const pb of procBlocks) {
-          const lines = pb.split('\n');
-          const index = parseInt(lines[0].trim(), 10);
-          if (!isNaN(index) && lines.length >= 3) {
-            procMap[index] = lines.slice(2).join('\n');
-          }
-        }
-
-        const mergedBlocks = [];
-        const missingIds = [];
-        for (const ob of origBlocks) {
-          const lines = ob.split('\n');
-          const index = parseInt(lines[0].trim(), 10);
-          if (!isNaN(index) && lines.length >= 3) {
-            if (procMap[index]) {
-              lines.splice(2, lines.length - 2, procMap[index]);
-            } else {
-              missingIds.push(index);
-            }
-          }
-          mergedBlocks.push(lines.join('\n'));
-        }
-        if (missingIds.length > 0) {
-          console.warn(
-            `\n⚠️ [Cảnh báo] Lô vừa rồi Gemini đã TRONG CƠN ẢO GIÁC KHÔNG XỬ LÝ các ID sau (đành giữ nguyên văn bản gốc SRT): ${missingIds.join(
-              ', '
-            )}`
-          );
-        }
-        finalSrt += mergedBlocks.join('\n\n') + '\n\n';
-      } else {
-        // Bị thiếu hoặc trả về trống → dùng bản gốc
-        finalSrt += chunk + '\n\n';
-      }
-    }
-
-    const srtOut = finalSrt.trim();
-
-    // Sau SRT: luôn gọi title → description → tags trên tab đầu (dù <30 hay ≥30 phút)
-    if (durationMin >= 30) {
-      console.log(`Video ≥ 30 phút (~${durationMin.toFixed(1)} phút): dùng tab đầu tiên cho bước title/description/tags.`);
-      try {
-        await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      } catch (e) {
-        console.warn('Không thể goto Gemini cho bước meta:', e.message);
-      }
-      await initialPage.waitForTimeout(1500);
-    }
-
-    const meta = await runGeminiVideoMetaPrompts(initialPage, { title, srtOut, description, tagsStr });
+    const [srtOut, meta] = await Promise.all(promises);
 
     return {
       srt: srtOut,

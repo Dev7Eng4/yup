@@ -7,7 +7,8 @@
   "scripts": {
     "tao-chrome-profile": "node contents/makeChromeProfile.js",
     "lay-thong-tin-youtube (video, channel)": "node -e \"import('./contents/getInfoChannel.js').then(m=>m.default())\"",
-    "tao-batch-video-tu-audio": "node contents/scripts/runBatchVideo.js",
+    "tao-batch-video-tu-audio": "node -e \"import('./contents/scripts/createBatchVideo.js').then(m => m.default({ videoType: 'from_audio' }))\"",
+    "tao-batch-video-reup-full": "node -e \"import('./contents/scripts/createBatchVideo.js').then(m => m.default({ videoType: 'reup_full' }))\"",
     "dong-bo-trang-thai": "node contents/scripts/syncStatusToExcel.js",
     "lam-lai-video": "node contents/makeVideoFromFull.js"
   },

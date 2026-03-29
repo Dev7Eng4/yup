@@ -43,6 +43,17 @@ function channelToUploadsPlaylistId(channelId) {
 }
 
 /**
+ * Format duration từ giây sang HH:mm:ss
+ */
+function formatDuration(seconds) {
+  if (!seconds) return '00:00:00';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return [hrs, mins, secs].map(v => (v < 10 ? '0' + v : v)).join(':');
+}
+
+/**
  * Lấy thông tin kênh (và video từ kênh)
  */
 async function getChannelInfo(url) {
@@ -75,7 +86,12 @@ async function getChannelInfo(url) {
         entries = rawPlaylist.entries || [];
         videoLinks = entries
           .filter(e => e.id && e.id.length === 11)
-          .map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
+          .map(e => ({
+            url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+            title: e.title || '',
+            viewCount: e.view_count || 0,
+            duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
+          }));
       } catch (err) {
         console.warn('Không lấy được danh sách video:', err.message);
       }
@@ -87,7 +103,12 @@ async function getChannelInfo(url) {
     entries = rawMeta.entries;
     videoLinks = entries
       .filter(e => e.id && e.id.length === 11)
-      .map(e => ({ url: e.url || `https://www.youtube.com/watch?v=${e.id}`, title: e.title || '' }));
+      .map(e => ({
+        url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+        title: e.title || '',
+        viewCount: e.view_count || 0,
+        duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
+      }));
   }
 
   return {
@@ -148,7 +169,17 @@ async function main() {
     const result = await getChannelInfo(url);
 
     // Tạo dữ liệu: mỗi video một dòng (đảo ngược: cũ ở đầu, mới ở cuối)
-    const headers = ['EMAIL', 'CHANNEL NAME', 'CHANNEL TAGS', 'LINK VIDEO', 'STATUS', 'BACKGROUND VIDEO', 'START FROM'];
+    const headers = [
+      'EMAIL',
+      'CHANNEL NAME',
+      'CHANNEL TAGS',
+      'LINK VIDEO',
+      'VIEWS',
+      'DURATION',
+      'STATUS',
+      'BACKGROUND VIDEO',
+      'START FROM',
+    ];
     const videoLinks = [...(result.video_links || [])].reverse();
 
     const channelName = result.name || '';
@@ -208,17 +239,21 @@ async function main() {
       console.log(`Tìm thấy ${newVideos.length} video mới. Đang thêm vào cuối file...`);
       startRowIndex = sheet.rowCount + 1;
       newVideos.forEach(video => {
-        const url = typeof video === 'string' ? video : video?.url || '';
-        sheet.addRow(['', '', '', url, '', '', '']);
+        const url = video?.url || '';
+        const views = video?.viewCount || 0;
+        const duration = video?.duration || '';
+        sheet.addRow(['', '', '', url, views, duration, '', '', '']);
       });
     } else {
       const rows =
         videoLinks.length > 0
           ? videoLinks.map((video, i) => {
-              const url = typeof video === 'string' ? video : video?.url || '';
-              return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, '', '', ''];
+              const url = video?.url || '';
+              const views = video?.viewCount || 0;
+              const duration = video?.duration || '';
+              return ['', i === 0 ? channelName : '', i === 0 ? channelTagsStr : '', url, views, duration, '', '', ''];
             })
-          : [['', channelName, channelTagsStr, '(Không có video)', '', '', '']];
+          : [['', channelName, channelTagsStr, '(Không có video)', 0, '00:00:00', '', '', '']];
 
       if (!fs.existsSync(channelDir)) {
         fs.mkdirSync(channelDir, { recursive: true });
@@ -231,13 +266,15 @@ async function main() {
 
       // Độ rộng cột: email | CHANNEL NAME | CHANNEL TAGS | LINK VIDEO | STATUS | BACKGROUND VIDEO | START FROM
       sheet.columns = [
-        { width: 25 }, // EMAIL
-        { width: 28 }, // CHANNEL NAME
+        { width: 20 }, // EMAIL
+        { width: 25 }, // CHANNEL NAME
         { width: 20 }, // CHANNEL TAGS
-        { width: 50 }, // LINK VIDEO
-        { width: 22 }, // STATUS
+        { width: 45 }, // LINK VIDEO
+        { width: 12 }, // VIEWS
+        { width: 12 }, // DURATION
+        { width: 20 }, // STATUS
         { width: 22 }, // BACKGROUND VIDEO
-        { width: 15 }, // START FROM
+        { width: 12 }, // START FROM
       ];
     }
 
@@ -251,17 +288,17 @@ async function main() {
     const listFormula = `"${TRANG_THAI_OPTIONS.filter(Boolean).join(',')}"`;
 
     for (let i = 2; i <= sheet.rowCount; i++) {
-      // Dropdown STATUS (cột E - index 5)
-      sheet.getCell(`E${i}`).dataValidation = {
+      // Dropdown STATUS (cột G - index 7)
+      sheet.getCell(`G${i}`).dataValidation = {
         type: 'list',
         allowBlank: true,
         formulae: [listFormula],
       };
 
-      // Dropdown Background Video (cột F - index 6)
+      // Dropdown Background Video (cột H - index 8)
       if (bgOptions.length > 0) {
         const bgFormula = `"${bgOptions.join(',')}"`;
-        sheet.getCell(`F${i}`).dataValidation = {
+        sheet.getCell(`H${i}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           formulae: [bgFormula],
@@ -271,7 +308,7 @@ async function main() {
 
     await workbook.xlsx.writeFile(outputExcelPath);
 
-    console.log(`\nĐã lưu kết quả vào ${path.basename(outputExcelPath)} (${rows.length} video)`);
+    console.log(`\nĐã lưu kết quả vào ${path.basename(outputExcelPath)} (${videoLinks.length} video)`);
   } catch (err) {
     console.error('Lỗi:', err.message);
     if (err.stderr) console.error('Chi tiết:', err.stderr);

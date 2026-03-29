@@ -57,6 +57,19 @@ export async function readVideoUrlsFromFile(inputFile = null) {
     const startIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'start from');
 
     let hasFoundStart = startIdx < 0; // Nếu không có cột START FROM thì coi như đã bắt đầu ngay lập tức
+    if (!hasFoundStart) {
+      // Nếu có cột START FROM, kiểm tra xem thực tế có dòng nào được đánh dấu không.
+      // Nếu toàn bộ cột trống, mặc định là bắt đầu luôn.
+      let hasAnyMark = false;
+      for (let j = 2; j <= sheet.rowCount; j++) {
+        if (String(sheet.getRow(j).getCell(startIdx).value || '').trim()) {
+          hasAnyMark = true;
+          break;
+        }
+      }
+      if (!hasAnyMark) hasFoundStart = true;
+    }
+
     const items = [];
     for (let i = 2; i <= sheet.rowCount; i++) {
       const row = sheet.getRow(i);
@@ -98,6 +111,14 @@ export async function readVideoUrlsFromFile(inputFile = null) {
   const startIdx = headers.findIndex(h => h.toLowerCase() === 'start from');
 
   let hasFoundStart = startIdx < 0;
+  if (!hasFoundStart) {
+    const hasAnyMark = lines.slice(1).some(line => {
+      const cells = line.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+      return (cells[startIdx] || '').trim();
+    });
+    if (!hasAnyMark) hasFoundStart = true;
+  }
+
   const items = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
@@ -126,7 +147,26 @@ export async function readVideoUrlsFromFile(inputFile = null) {
   return items;
 }
 
-async function main() {
+async function main(props = {}) {
+  const { VIDEO_TYPE } = await import('../constants/index.js');
+  let type = props.videoType;
+
+  if (!type) {
+    const inquirer = (await import('inquirer')).default;
+    const { videoType } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'videoType',
+        message: 'Chọn loại video muốn tạo:',
+        choices: [
+          { name: 'Tạo từ Audio (Ghép nền ngẫu nhiên)', value: VIDEO_TYPE.FROM_AUDIO },
+          { name: 'Reup Full (Thêm overlay ảnh/video)', value: VIDEO_TYPE.REUP_FULL },
+        ],
+      },
+    ]);
+    type = videoType;
+  }
+
   let inputFile = null;
 
   if (fs.existsSync(CHANNELS_DIR)) {
@@ -181,8 +221,13 @@ async function main() {
   }
   console.log(`Đọc được ${items.length} link từ file. Bắt đầu xử lý tuần tự...\n`);
 
-  const { default: makeVideoFromAudio } = await import('../makeVideoFromAudio.js');
-  await makeVideoFromAudio({ mode: 'batch', inputFile, items, batchLimit: BATCH_LIMIT });
+  if (type === VIDEO_TYPE.FROM_AUDIO) {
+    const { default: makeVideoFromAudio } = await import('../makeVideoFromAudio.js');
+    await makeVideoFromAudio({ mode: 'batch', inputFile, items, batchLimit: BATCH_LIMIT });
+  } else if (type === VIDEO_TYPE.REUP_FULL) {
+    const { default: makeVideoFromFull } = await import('../makeVideoFromFull.js');
+    await makeVideoFromFull({ mode: 'batch', inputFile, items, batchLimit: BATCH_LIMIT });
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
@@ -191,4 +236,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     process.exit(1);
   });
 }
+
+export default main;
 
