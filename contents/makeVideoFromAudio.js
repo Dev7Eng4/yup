@@ -4,7 +4,7 @@
  * - N video stock từ backgrounds/<tên> (N = STOCK_VIDEO_COUNT, cat, dog, ...)
  * - Bước 1: chỉnh tempo audio (ffmpeg atempo; nhỏ hơn 1 = chậm hơn → thời lượng dài hơn)
  * - Độ dài video = độ dài audio (sau khi chỉnh tốc độ), loop video nếu không đủ
- * - Phụ đề: copy trực tiếp file .srt/.vtt từ downloads/ — không scale mốc thời gian
+ * - Phụ đề: copy file .srt/.vtt từ downloads/ — nếu SPEED ≠ 1 sẽ tự động scale timestamps cho khớp tốc độ audio
  * - Ghép stock: crossfade (xfade) giữa các clip — clip cũ mờ dần, clip mới sáng dần
  * - mode: 'single' = xử lý 1 (audio có sẵn trong downloads), 'batch' = đọc CSV, tải từng link rồi xử lý
  * - batch: 1 ảnh logo kênh trong thư mục chứa CSV/Excel — mọi video batch dùng chung ảnh đó; không có ảnh → LOGO_PATH mặc định
@@ -15,11 +15,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
 import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { convertAudioFile } from './convertAudio.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
+
+export const SPEED = 0.91;
 
 /**
  * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
@@ -69,10 +72,11 @@ function stockNormalizeFilterChain(inputLabel, outLabel) {
 }
 
 /**
- * Hệ số `atempo` của ffmpeg (0.5–2.0). Nhỏ hơn 1 = đọc chậm hơn; thời lượng ≈ (độ dài gốc) / giá trị → dài ra.
- * Ví dụ 0.95 → ~5.3% dài hơn; không phải rút ngắn.
+ * SPEED được dùng làm hệ số atempo cho audio.
+ * Nhỏ hơn 1 = đọc chậm hơn → thời lượng dài hơn.
+ * Ví dụ 0.91 → ~9.9% dài hơn.
+ * Khi SPEED ≠ 1, timestamps trong SRT cũng được scale theo.
  */
-const AUDIO_ATEMPO = 1.0;
 
 /** Logo mặc định (single hoặc batch khi thư mục kênh không có ảnh) — hình tròn góc trên phải */
 const LOGO_PATH = path.join(ROOT, 'logo', 'catLogo.png');
@@ -300,33 +304,75 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
 }
 
 /**
- * Tạo bản audio đã chỉnh tempo (atempo) — file tạm dùng cho các bước sau
+ * Tạo bản audio đã chỉnh tempo (atempo=SPEED) — file tạm dùng cho các bước sau.
+ * Nếu SPEED == 1.0, chỉ copy / re-encode nhẹ (không thay đổi tốc độ).
+ * Nếu SPEED != 1.0, gọi convertAudioFile từ convertAudio.js.
  */
 function buildSpeedAdjustedAudio(sourcePath, destPath) {
-  const atempo = AUDIO_ATEMPO;
-  if (atempo < 0.5 || atempo > 2.0) {
-    throw new Error(`atempo chỉ hỗ trợ 0.5–2.0, hiện AUDIO_ATEMPO=${atempo}`);
+  const speed = SPEED;
+  if (speed === 1) {
+    // Không cần chỉnh tốc độ — re-encode sang m4a để đồng nhất format
+    console.log('SPEED = 1.0 → giữ nguyên tốc độ audio, chỉ re-encode sang m4a...');
+    execSync(`ffmpeg -y -i "${sourcePath}" -c:a aac -b:a 192k "${destPath}"`, { stdio: 'inherit' });
+    return;
   }
+
+  // SPEED != 1 → convert audio qua convertAudioFile
   const durBefore = getDuration(sourcePath);
-  const expectedAfter = durBefore / atempo;
-  const pctLonger = ((1 / atempo - 1) * 100).toFixed(1);
+  const expectedAfter = durBefore / speed;
+  const pctChange = ((1 / speed - 1) * 100).toFixed(1);
   console.log(
-    `Đang chỉnh tempo (atempo=${atempo}: chậm hơn → dài hơn ~${pctLonger}%; dự kiến ~${formatClockDuration(
+    `Đang chỉnh tốc độ audio (SPEED=${speed}: ${speed < 1 ? 'chậm hơn → dài hơn' : 'nhanh hơn → ngắn hơn'} ~${Math.abs(pctChange)}%; dự kiến ~${formatClockDuration(
       expectedAfter,
     )} / ${expectedAfter.toFixed(1)}s)...`,
   );
-  execSync(`ffmpeg -y -i "${sourcePath}" -filter:a "atempo=${atempo}" -c:a aac -b:a 192k "${destPath}"`, { stdio: 'inherit' });
+  convertAudioFile(sourcePath, destPath, speed);
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
-    `Sau atempo: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
+    `Sau chỉnh tốc độ: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
       1,
-    )}s) | ffprobe dự kiến ~${expectedAfter.toFixed(1)}s`,
+    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`,
   );
-  if (durAfter < durBefore - 0.5) {
-    console.warn(
-      'Cảnh báo: file sau atempo ngắn hơn file gốc — lý thuyết phải dài hơn. Thử mở bằng VLC/ffplay hoặc `ffprobe`; Explorer/Windows đôi khi báo sai thời lượng AAC.',
-    );
-  }
+}
+
+/** Parse SRT time "HH:MM:SS,mmm" → tổng milliseconds */
+function srtTimeToMs(h, m, s, ms) {
+  return Number.parseInt(h) * 3600000 + Number.parseInt(m) * 60000 + Number.parseInt(s) * 1000 + Number.parseInt(ms);
+}
+
+/** milliseconds → "HH:MM:SS,mmm" */
+function msToSrtTime(totalMs) {
+  const ms = Math.round(totalMs);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const msPart = ms % 1000;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(msPart).padStart(3, '0')}`;
+}
+
+/**
+ * Scale timestamps trong file SRT theo hệ số speed.
+ * Khi SPEED < 1 (chậm hơn), audio dài hơn → timestamps phải giãn ra (nhân 1/speed).
+ * Khi SPEED > 1 (nhanh hơn), audio ngắn hơn → timestamps phải co lại (nhân 1/speed).
+ * @param {string} srtPath - File SRT gốc
+ * @param {string} outputSrtPath - File SRT đã scale
+ * @param {number} speed - Tốc độ (vd: 0.91)
+ */
+function scaleSrtTimestamps(srtPath, outputSrtPath, speed) {
+  const content = fs.readFileSync(srtPath, 'utf8');
+  // Hệ số scale: duration_new = duration_old / speed
+  // → timestamp_new = timestamp_old / speed
+  const factor = 1 / speed;
+
+  const timeRe = /(\d{2}):(\d{2}):(\d{2}),(\d{3}) --> (\d{2}):(\d{2}):(\d{2}),(\d{3})/g;
+  const scaled = content.replaceAll(timeRe, (match, h1, m1, s1, ms1, h2, m2, s2, ms2) => {
+    const startMs = srtTimeToMs(h1, m1, s1, ms1) * factor;
+    const endMs = srtTimeToMs(h2, m2, s2, ms2) * factor;
+    return `${msToSrtTime(startMs)} --> ${msToSrtTime(endMs)}`;
+  });
+
+  fs.writeFileSync(outputSrtPath, scaled, 'utf-8');
+  console.log(`Đã scale SRT timestamps (factor=${factor.toFixed(4)}, speed=${speed}): ${path.basename(outputSrtPath)}`);
 }
 
 /**
@@ -447,30 +493,39 @@ async function processOne(bgNameArg, options = {}) {
   }
 
   const audioPath = getAudioFile();
-  const audioDurationSec = getDuration(audioPath);
-  const stockVideoCount = getDynamicStockVideoCount(audioDurationSec);
-  const videoPaths = getStockVideos(backgroundsDir, stockVideoCount);
 
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  const slowedAudioPath = path.join(OUTPUT_DIR, `temp_audio_speed${Math.round(AUDIO_ATEMPO * 100)}.m4a`);
+  // 1. Chỉnh tốc độ audio trước để có thời lượng chính xác
+  const slowedAudioPath = path.join(OUTPUT_DIR, `temp_audio_speed${Math.round(SPEED * 100)}.m4a`);
   buildSpeedAdjustedAudio(audioPath, slowedAudioPath);
   const workingAudioPath = slowedAudioPath;
 
-  /** Luôn đo trên file đã atempo (m4a tạm), không dùng độ dài MP3 gốc */
+  /** Luôn đo trên file đã chỉnh tốc độ (m4a tạm), không dùng độ dài MP3 gốc */
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
-    `Thời lượng audio sau atempo=${AUDIO_ATEMPO} (ffprobe, dùng cho nền + merge): ${formatClockDuration(
+    `Thời lượng audio sau SPEED=${SPEED} (dùng cho stock + merge): ${formatClockDuration(
       audioDurationAfterTempo,
     )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
   );
-  console.log(`Stock videos: ${videoPaths.map(p => path.basename(p)).join(', ')}`);
 
-  const subtitlePath = getSubtitleFile();
-  if (subtitlePath) {
-    console.log(`Phụ đề: ${path.basename(subtitlePath)} (${getSubtitleFormatLabel(subtitlePath)})`);
+  // 2. Lấy video stock dựa trên thời lượng MỚI
+  const stockVideoCount = getDynamicStockVideoCount(audioDurationAfterTempo);
+  const videoPaths = getStockVideos(backgroundsDir, stockVideoCount);
+  console.log(`Stock videos (${stockVideoCount} clip): ${videoPaths.map(p => path.basename(p)).join(', ')}`);
+
+  // 3. Xử lý phụ đề (scale timestamps nếu SPEED != 1)
+  let subtitlePath = getSubtitleFile();
+  let scaledSrtPath = null;
+  if (subtitlePath && SPEED !== 1) {
+    scaledSrtPath = path.join(OUTPUT_DIR, 'temp_scaled_sub' + path.extname(subtitlePath));
+    scaleSrtTimestamps(subtitlePath, scaledSrtPath, SPEED);
+    subtitlePath = scaledSrtPath; // Dùng file SRT đã scale
+    console.log(`Phụ đề (đã scale theo SPEED=${SPEED}): ${path.basename(scaledSrtPath)}`);
+  } else if (subtitlePath) {
+    console.log(`Phụ đề: ${path.basename(subtitlePath)}`);
   }
 
   const baseName = originalTitle ? sanitizeFilename(originalTitle) : path.basename(audioPath, path.extname(audioPath));
@@ -535,6 +590,7 @@ async function processOne(bgNameArg, options = {}) {
       },
     );
     fs.unlinkSync(tempSubPath);
+    if (scaledSrtPath && fs.existsSync(scaledSrtPath)) fs.unlinkSync(scaledSrtPath);
   } else {
     let filterComplexFinal;
     if (hasLogo) {
