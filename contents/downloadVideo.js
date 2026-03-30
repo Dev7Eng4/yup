@@ -141,7 +141,7 @@ async function downloadThumbnail(url, options = {}) {
  */
 async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
   const { cleanSrt } = await import('./cleanSrt.js');
-  const { updateContentWithGemini } = await import('./updateContentWithGemini2CH.js');
+  const { updateContentWithGemini } = await import('./updateContentWithGemini.js');
 
   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
   for (const file of vttFiles) {
@@ -172,7 +172,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
               title: geminiOut.title,
               description: geminiOut.description ?? '',
               tags: geminiOut.tags ?? '',
-            }),
+            })
           );
           console.log('✅ Đã gửi title/description/tags (Gemini) qua callback.');
         } catch (cbErr) {
@@ -332,10 +332,10 @@ async function downloadSingleVideo(url, options = {}) {
     }
 
     // Sau khi tải xong, tìm file thực tế trong folder downloads để trả về filePath chính xác
-    const files = fs.readdirSync(DEFAULT_OUTPUT_DIR).filter(f => /\.(mp4|m4a|mp3|mkv|mov|avi|webm)$/i.test(f));
-    if (files.length > 0) {
-      result.filePath = path.join(DEFAULT_OUTPUT_DIR, files[0]);
-    }
+    // const files = fs.readdirSync(DEFAULT_OUTPUT_DIR).filter(f => /\.(mp4|m4a|mp3|mkv|mov|avi|webm)$/i.test(f));
+    // if (files.length > 0) {
+    //   result.filePath = path.join(DEFAULT_OUTPUT_DIR, files[0]);
+    // }
     return result;
   } catch (err) {
     console.error(`Lỗi tải ${url}:`, err.message);

@@ -5,12 +5,9 @@
 
 import { openChromeProfile } from './makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
-import {
-  createPromptReCreateTitleVideo,
-  createPromptReCreateDescriptionVideo,
-  createPromptReCreateTagsVideo,
-} from './promts/createVideoInfo.js';
+import { createPromptSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
+import { clickElement } from './utils/dom.util.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
 const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
@@ -37,18 +34,30 @@ function getSrtDurationInMinutes(cuesArray) {
  * Gửi prompt lên giao diện chat hiện tại trên page và trả về kết quả
  */
 async function sendPromptToPage(page, prompt, label) {
-  const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
-  await page.waitForSelector(inputSelector, { timeout: 15000 });
+  // const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
+  // await page.waitForSelector(inputSelector, { timeout: 15000 });
 
-  const inputEl = await page.$(inputSelector);
-  const inputBbox = await inputEl.boundingBox();
-  if (inputBbox) {
-    await page.mouse.move(inputBbox.x + inputBbox.width / 2, inputBbox.y + inputBbox.height / 2, { steps: 10 });
-    await page.waitForTimeout(100);
-    await page.mouse.down();
-    await page.waitForTimeout(50);
-    await page.mouse.up();
-  }
+  // await clickElement(
+  //   page,
+  //   '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[3]/div[1]/bard-mode-switcher/div/button'
+  // );
+  // await clickElement(page, '/html/body/div[9]/div[2]/div/mat-bottom-sheet-container/div/mat-action-list/div[3]/div/button');
+  // await page.keyboard.press('Escape');
+
+  await clickElement(
+    page,
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
+  );
+
+  // const inputEl = await page.$(inputSelector);
+  // const inputBbox = await inputEl.boundingBox();
+  // if (inputBbox) {
+  //   await page.mouse.move(inputBbox.x + inputBbox.width / 2, inputBbox.y + inputBbox.height / 2, { steps: 10 });
+  //   await page.waitForTimeout(100);
+  //   await page.mouse.down();
+  //   await page.waitForTimeout(50);
+  //   await page.mouse.up();
+  // }
   await page.waitForTimeout(500);
 
   await page.keyboard.down('Control');
@@ -60,18 +69,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await page.keyboard.insertText(prompt);
   await page.waitForTimeout(1000);
-
-  const sendBtnSelector = 'button.send-button, button[aria-label="Send message"], button[data-mat-icon-name="send"]';
-  await page.waitForSelector(sendBtnSelector, { timeout: 5000 });
-  const sendEl = await page.$(sendBtnSelector);
-  const sendBbox = await sendEl.boundingBox();
-  if (sendBbox) {
-    await page.mouse.move(sendBbox.x + sendBbox.width / 2, sendBbox.y + sendBbox.height / 2, { steps: 10 });
-    await page.waitForTimeout(100);
-    await page.mouse.down();
-    await page.waitForTimeout(50);
-    await page.mouse.up();
-  }
+  await page.keyboard.press('Enter');
 
   console.log(`Đã gửi ${label}, đang đợi Gemini xử lý...`);
   await waitForGeminiResponse(page, 150000);
@@ -98,24 +96,58 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
 }
 
 /**
- * Trên cùng một tab Gemini: title → description → tags (createVideoInfo).
+ * Trên cùng một tab Gemini: tóm tắt SRT theo chunk (500 cues) → metadata tổng hợp (createVideoInfo.js).
+ * Giống luồng updateContentWithGemini2CH.js, prompt từ createPromptSummaryContent / createPromptCreateMetaInfo.
  */
-async function runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr }) {
-  console.log('\n--- Gemini: tiêu đề → mô tả → tags (tuần tự) ---');
+async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
+  console.log('\n--- Gemini: tóm tắt cuốn chiếu (500 cues/lần) → metadata tổng hợp (createVideoInfo) ---');
   await page.waitForTimeout(1500);
 
-  const newTitle = await sendPromptToPage(page, createPromptReCreateTitleVideo(title, srtContent), 'tiêu đề video');
-  await page.waitForTimeout(1500);
+  const cues = srtContent
+    .split(/\n\n+/)
+    .map(c => c.trim())
+    .filter(Boolean);
 
-  const newDescription = await sendPromptToPage(page, createPromptReCreateDescriptionVideo(newTitle.trim(), description), 'mô tả video');
-  await page.waitForTimeout(1500);
+  const CHUNK_SIZE_SUMMARY = 500;
+  const summaries = [];
+  let lastSummary = '「物語の始まり」';
+  const totalChunks = Math.ceil(cues.length / CHUNK_SIZE_SUMMARY) || 1;
 
-  const newTags = await sendPromptToPage(page, createPromptReCreateTagsVideo(newTitle.trim(), tagsStr), 'tags video');
+  for (let i = 0; i < cues.length; i += CHUNK_SIZE_SUMMARY) {
+    const chunk = cues.slice(i, i + CHUNK_SIZE_SUMMARY).join('\n\n');
+    const chunkIndex = Math.floor(i / CHUNK_SIZE_SUMMARY) + 1;
+
+    console.log(`Đang tóm tắt phần ${chunkIndex}/${totalChunks}...`);
+
+    const prompt = createPromptSummaryContent(chunk, lastSummary);
+    const result = await sendPromptToPage(page, prompt, `tóm tắt phần ${chunkIndex}/${totalChunks}`);
+
+    const cleanResult = result.trim();
+    summaries.push(cleanResult);
+    lastSummary = cleanResult;
+
+    if (i + CHUNK_SIZE_SUMMARY < cues.length) {
+      await page.waitForTimeout(2000);
+    }
+  }
+
+  const finalSummaryForMeta = summaries.join('\n');
+  console.log('\nĐang tạo metadata từ bản tóm tắt tổng hợp...');
+
+  const metaRaw = await sendPromptToPage(
+    page,
+    createPromptCreateMetaInfo(title, finalSummaryForMeta),
+    'metadata video (title, desc, tags)'
+  );
+
+  const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);
+  const descMatch = metaRaw.match(/【動画説明文】\s*([\s\S]*?)(?=\n\n?【|$)/);
+  const tagsMatch = metaRaw.match(/【タグ】\s*([\s\S]*?)(?=\n\n?【|$)/);
 
   return {
-    title: newTitle.trim(),
-    description: newDescription.trim(),
-    tags: newTags.trim(),
+    title: titleMatch ? titleMatch[1].trim() : title,
+    description: descMatch ? descMatch[1].trim() : '',
+    tags: tagsMatch ? tagsMatch[1].trim() : '',
   };
 }
 
@@ -123,11 +155,10 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, description,
  * INTERNAL: Xử lý Meta (Title, Description, Tags) trên 1 page có sẵn
  */
 async function internalUpdateVideoMeta(page, options = {}) {
-  const { title = '', srtContent = '', description = '', tags: tagsOpt = [] } = options;
-  const tagsStr = Array.isArray(tagsOpt) ? tagsOpt.join(', ') : String(tagsOpt || '');
+  const { title = '', srtContent = '' } = options;
 
   await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent, description, tagsStr });
+  const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent });
   return meta;
 }
 
@@ -279,7 +310,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       internalUpdateVideoMeta(metaPage, {
         ...options,
         srtContent: rawSrtContent,
-      }),
+      })
     );
 
     const [srtOut, meta] = await Promise.all(promises);

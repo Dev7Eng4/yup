@@ -24,7 +24,7 @@ async function readVideoUrlsFromFile(inputFile = null) {
     const trangThaiIdx = headerRow.values.findIndex(v =>
       String(v || '')
         .toLowerCase()
-        .includes('status'),
+        .includes('status')
     );
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
     const outroVideoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro video');

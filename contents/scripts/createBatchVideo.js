@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..', '..');
 const CHANNELS_DIR = path.join(ROOT, 'channels');
 
-const BATCH_LIMIT = 20;
+const BATCH_LIMIT = 1;
 
 const DATA_FILE_PATHS = [
   path.join(ROOT, 'channels', '*', 'output.xlsx'),
@@ -51,7 +51,7 @@ export async function readVideoUrlsFromFile(inputFile = null) {
     const trangThaiIdx = headerRow.values.findIndex(v =>
       String(v || '')
         .toLowerCase()
-        .includes('status'),
+        .includes('status')
     );
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
     const startIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'start from');
@@ -238,3 +238,4 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 }
 
 export default main;
+
