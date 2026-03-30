@@ -5,7 +5,11 @@
 
 import { openChromeProfile } from './scripts/makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
-import { createPromptToCreateSummaryContent, createPromptToCreateMetaInfo } from './promts/createMeta2ch.js';
+import {
+  createPromptToCreateSummaryContent,
+  createPromptToMergeSummaryContent,
+  createPromptToCreateMetaInfo,
+} from './promts/createMeta2ch.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
@@ -131,14 +135,22 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, description,
   }
 
   // 3. Ghép các bản tóm tắt lại thành một summary tổng thể
-  const finalSummaryForMeta = summaries.join('\n');
-  console.log('\nĐang tạo metadata từ bản tóm tắt tổng hợp...');
+  let finalSummaryForMeta = summaries.join('\n');
+
+  if (summaries.length > 2) {
+    console.log(`\nCó ${summaries.length} bản tóm tắt, đang gửi prompt merge các bản tóm tắt...`);
+    const mergePrompt = createPromptToMergeSummaryContent(finalSummaryForMeta);
+    finalSummaryForMeta = await sendPromptToPage(page, mergePrompt, 'merge summaries');
+    await page.waitForTimeout(1500);
+  }
+
+  console.log('\nĐang tạo metadata từ bản tóm tắt cuối cùng...');
 
   // 4. Tạo metadata tổng hợp từ summary cuối cùng
   const metaRaw = await sendPromptToPage(
     page,
     createPromptToCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)'
+    'metadata video (title, desc, tags)',
   );
 
   // 5. Parse kết quả
@@ -150,6 +162,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, description,
     title: titleMatch ? titleMatch[1].trim() : title,
     description: descMatch ? descMatch[1].trim() : '',
     tags: tagsMatch ? tagsMatch[1].trim() : '',
+    summary: finalSummaryForMeta,
   };
 }
 
@@ -314,7 +327,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       internalUpdateVideoMeta(metaPage, {
         ...options,
         srtContent: rawSrtContent,
-      })
+      }),
     );
 
     const [srtOut, meta] = await Promise.all(promises);

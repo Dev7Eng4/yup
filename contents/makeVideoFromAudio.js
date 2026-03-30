@@ -650,6 +650,7 @@ async function processOne(bgNameArg, options = {}) {
       titleGemini: gem?.title || '',
       descriptionGemini: gem?.description || '',
       tagsGemini: gem?.tags || '',
+      summaryGemini: gem?.summary || '',
     };
     const metaPath = path.join(perVideoDir, 'video-meta.json');
     fs.writeFileSync(metaPath, JSON.stringify(metaPayload, null, 2), 'utf8');
@@ -744,14 +745,15 @@ async function main(options = {}) {
 
       const result = await downloadSingleVideo(url, {
         mode: MAKE_VIDEO_MODE.FROM_AUDIO,
-        callback: ({ title: gemTitle, description: gemDesc, tags: gemTags }) => {
+        callback: ({ title: gemTitle, description: gemDesc, tags: gemTags, summary: gemSummary }) => {
           const tagsStr = typeof gemTags === 'string' ? gemTags : Array.isArray(gemTags) ? gemTags.join(', ') : '';
           geminiByUrl[url] = {
             title: gemTitle || '',
             description: gemDesc || '',
             tags: tagsStr,
+            summary: gemSummary || '',
           };
-          console.log('Đã nhận title/description/tags từ Gemini (sẽ ghi video-meta.json sau khi render).');
+          console.log('Đã nhận title/description/tags/summary từ Gemini (sẽ ghi video-meta.json sau khi render).');
         },
       });
       if (result) {

@@ -5,7 +5,7 @@
 
 import { openChromeProfile } from './makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
-import { createPromptSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
+import { createPromptSummaryContent, createPromptToMergeSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 import { clickElement } from './utils/dom.util.js';
 
@@ -46,7 +46,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
   );
 
   // const inputEl = await page.$(inputSelector);
@@ -131,13 +131,21 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
     }
   }
 
-  const finalSummaryForMeta = summaries.join('\n');
+  let finalSummaryForMeta = summaries.join('\n');
+
+  if (summaries.length >= 2) {
+    console.log(`\nCó ${summaries.length} bản tóm tắt, đang gửi prompt merge các bản tóm tắt...`);
+    const mergePrompt = createPromptToMergeSummaryContent(finalSummaryForMeta);
+    finalSummaryForMeta = await sendPromptToPage(page, mergePrompt, 'merge summaries');
+    await page.waitForTimeout(1500);
+  }
+
   console.log('\nĐang tạo metadata từ bản tóm tắt tổng hợp...');
 
   const metaRaw = await sendPromptToPage(
     page,
     createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)'
+    'metadata video (title, desc, tags)',
   );
 
   const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);
@@ -148,6 +156,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
     title: titleMatch ? titleMatch[1].trim() : title,
     description: descMatch ? descMatch[1].trim() : '',
     tags: tagsMatch ? tagsMatch[1].trim() : '',
+    summary: finalSummaryForMeta,
   };
 }
 
@@ -310,7 +319,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       internalUpdateVideoMeta(metaPage, {
         ...options,
         srtContent: rawSrtContent,
-      })
+      }),
     );
 
     const [srtOut, meta] = await Promise.all(promises);

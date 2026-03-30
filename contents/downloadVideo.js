@@ -172,9 +172,10 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
               title: geminiOut.title,
               description: geminiOut.description ?? '',
               tags: geminiOut.tags ?? '',
+              summary: geminiOut.summary ?? '',
             })
           );
-          console.log('✅ Đã gửi title/description/tags (Gemini) qua callback.');
+          console.log('✅ Đã gửi title/description/tags/summary (Gemini) qua callback.');
         } catch (cbErr) {
           console.warn('callback:', cbErr.message);
         }
@@ -397,10 +398,11 @@ async function main() {
         videoTitle: result.title,
         description: result.description,
         tags: result.tags,
-        callback: ({ title, description, tags }) => {
+        callback: ({ title, description, tags, summary }) => {
           if (title != null && String(title).trim() !== '') mergedResult.title = String(title).trim();
           if (description != null) mergedResult.description = description;
           if (tags != null) mergedResult.tags = tags;
+          if (summary != null) mergedResult.summary = summary;
         },
       });
     } catch (err) {
