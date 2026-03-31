@@ -11,7 +11,8 @@
     "tao-batch-video-reup-full": "node -e \"import('./contents/scripts/createBatchVideo.js').then(m => m.default({ videoType: 'reup_full' }))\"",
     "dong-bo-trang-thai": "node contents/scripts/syncStatusToExcel.js",
     "lam-lai-video": "node contents/makeVideoFromFull.js",
-    "tao-thumbnail-flow": "node contents/scripts/createThumbnailFlow.js"
+    "tao-thumbnail-flow": "node contents/scripts/createThumbnailFlow.js",
+    "tom-tat-meta-tu-transcript": "node contents/scripts/summaryMetaFromTranscript.js"
   },
   "dependencies": {
     "@prevter/tiktok-scraper": "^1.0.1",

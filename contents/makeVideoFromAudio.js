@@ -36,7 +36,8 @@ function getDynamicStockVideoCount(audioDurationSec) {
   if (minutes < 25) return 15;
   if (minutes < 40) return 18;
   if (minutes < 60) return 21;
-  return 25;
+  if (minutes < 90) return 25;
+  return 28;
 }
 
 /** Crossfade giữa các clip stock (giây): clip trước mờ dần, clip sau sáng dần */
@@ -295,7 +296,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-preset',
     'medium',
     '-an',
-    outputPath,
+    outputPath
   );
 
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
@@ -322,16 +323,16 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
   const expectedAfter = durBefore / speed;
   const pctChange = ((1 / speed - 1) * 100).toFixed(1);
   console.log(
-    `Đang chỉnh tốc độ audio (SPEED=${speed}: ${speed < 1 ? 'chậm hơn → dài hơn' : 'nhanh hơn → ngắn hơn'} ~${Math.abs(pctChange)}%; dự kiến ~${formatClockDuration(
-      expectedAfter,
-    )} / ${expectedAfter.toFixed(1)}s)...`,
+    `Đang chỉnh tốc độ audio (SPEED=${speed}: ${speed < 1 ? 'chậm hơn → dài hơn' : 'nhanh hơn → ngắn hơn'} ~${Math.abs(
+      pctChange
+    )}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`
   );
   convertAudioFile(sourcePath, destPath, speed);
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
     `Sau chỉnh tốc độ: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
-      1,
-    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`,
+      1
+    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`
   );
 }
 
@@ -507,8 +508,8 @@ async function processOne(bgNameArg, options = {}) {
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
     `Thời lượng audio sau SPEED=${SPEED} (dùng cho stock + merge): ${formatClockDuration(
-      audioDurationAfterTempo,
-    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
+      audioDurationAfterTempo
+    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`
   );
 
   // 2. Lấy video stock dựa trên thời lượng MỚI
@@ -540,8 +541,8 @@ async function processOne(bgNameArg, options = {}) {
     const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
       `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
-        1,
-      )}s)...`,
+        1
+      )}s)...`
     );
   } else {
     console.log('Đang tạo nền stock (1 clip, loop nếu clip ngắn hơn audio)...');
@@ -587,7 +588,7 @@ async function processOne(bgNameArg, options = {}) {
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      },
+      }
     );
     fs.unlinkSync(tempSubPath);
     if (scaledSrtPath && fs.existsSync(scaledSrtPath)) fs.unlinkSync(scaledSrtPath);
@@ -606,7 +607,7 @@ async function processOne(bgNameArg, options = {}) {
       `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
       {
         stdio: 'inherit',
-      },
+      }
     );
   }
 
@@ -713,7 +714,7 @@ async function main(options = {}) {
       console.log(`Logo kênh (dùng cho mọi video batch): ${batchChannelLogoPath}`);
       if (channelLogoImages.length > 1) {
         console.warn(
-          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`,
+          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`
         );
       }
     }

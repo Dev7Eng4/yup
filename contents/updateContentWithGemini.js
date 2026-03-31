@@ -8,9 +8,10 @@ import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/upd
 import { createPromptSummaryContent, createPromptToMergeSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 import { clickElement } from './utils/dom.util.js';
+import { GEMINI_CHUNK_SIZE } from './constants/index.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
-const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
+const MAX_CONCURRENT = 2; // số lượng tối đa 5 browser (tab) đồng thời
 
 /**
  * Láy thời lượng video (tính bằng phút) dựa vào dòng cue SRT cuối cùng
@@ -46,7 +47,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
   );
 
   // const inputEl = await page.$(inputSelector);
@@ -108,14 +109,13 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
     .map(c => c.trim())
     .filter(Boolean);
 
-  const CHUNK_SIZE_SUMMARY = 500;
   const summaries = [];
   let lastSummary = '「物語の始まり」';
-  const totalChunks = Math.ceil(cues.length / CHUNK_SIZE_SUMMARY) || 1;
+  const totalChunks = Math.ceil(cues.length / GEMINI_CHUNK_SIZE.SUMMARY_CONTENT) || 1;
 
-  for (let i = 0; i < cues.length; i += CHUNK_SIZE_SUMMARY) {
-    const chunk = cues.slice(i, i + CHUNK_SIZE_SUMMARY).join('\n\n');
-    const chunkIndex = Math.floor(i / CHUNK_SIZE_SUMMARY) + 1;
+  for (let i = 0; i < cues.length; i += GEMINI_CHUNK_SIZE.SUMMARY_CONTENT) {
+    const chunk = cues.slice(i, i + GEMINI_CHUNK_SIZE.SUMMARY_CONTENT).join('\n\n');
+    const chunkIndex = Math.floor(i / GEMINI_CHUNK_SIZE.SUMMARY_CONTENT) + 1;
 
     console.log(`Đang tóm tắt phần ${chunkIndex}/${totalChunks}...`);
 
@@ -126,7 +126,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
     summaries.push(cleanResult);
     lastSummary = cleanResult;
 
-    if (i + CHUNK_SIZE_SUMMARY < cues.length) {
+    if (i + GEMINI_CHUNK_SIZE.SUMMARY_CONTENT < cues.length) {
       await page.waitForTimeout(2000);
     }
   }
@@ -145,7 +145,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
   const metaRaw = await sendPromptToPage(
     page,
     createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)',
+    'metadata video (title, desc, tags)'
   );
 
   const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);
@@ -189,10 +189,9 @@ async function internalUpdateTranscript(context, initialPage, rawSrtContent, opt
   const durationMin = getSrtDurationInMinutes(cues);
   console.log(`Độ dài video check được qua SRT cuối: ~${durationMin.toFixed(1)} phút`);
 
-  const CHUNK_SIZE = 100;
   const chunks = [];
-  for (let i = 0; i < cues.length; i += CHUNK_SIZE) {
-    chunks.push(cues.slice(i, i + CHUNK_SIZE).join('\n\n'));
+  for (let i = 0; i < cues.length; i += GEMINI_CHUNK_SIZE.UPDATE_TRANSCRIPT) {
+    chunks.push(cues.slice(i, i + GEMINI_CHUNK_SIZE.UPDATE_TRANSCRIPT).join('\n\n'));
   }
 
   const totalChunks = chunks.length;
@@ -319,7 +318,7 @@ export async function updateContentWithGemini(rawSrtContent, options = {}) {
       internalUpdateVideoMeta(metaPage, {
         ...options,
         srtContent: rawSrtContent,
-      }),
+      })
     );
 
     const [srtOut, meta] = await Promise.all(promises);
