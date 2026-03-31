@@ -11,9 +11,9 @@ import {
   createPromptToCreateMetaInfo,
 } from './promts/createMeta2ch.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
+import { GEMINI_CHUNK_SIZE, MAX_GEMINI_CONCURRENT } from './constants/index.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
-const MAX_CONCURRENT = 5; // số lượng tối đa 5 browser (tab) đồng thời
 
 /**
  * Láy thời lượng video (tính bằng phút) dựa vào dòng cue SRT cuối cùng
@@ -216,7 +216,7 @@ async function internalUpdateTranscript(context, initialPage, rawSrtContent, opt
       if (i < totalChunks - 1) await initialPage.waitForTimeout(2000);
     }
   } else {
-    const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
+    const activeConcurrency = Math.min(MAX_GEMINI_CONCURRENT, totalChunks);
     console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
 
     const pages = [initialPage];
@@ -300,40 +300,38 @@ export async function updateTranscriptWithGemini(rawSrtContent, options = {}) {
 
 /**
  * Combined function hỗ trợ tham số updateTranscript
+ * Có transcript: xử lý transcript xong trên tab đầu, sau đó mới mở tab mới cho meta (không song song).
  */
 export async function updateContentWithGemini(rawSrtContent, options = {}) {
   const { updateTranscript = true } = options;
 
   console.log('Đang mở Chrome để xử lý Gemini...');
-  const { context, page: transcriptPage } = await openChromeProfile({ visible: true });
-  const metaPage = await context.newPage();
+  const { context, page } = await openChromeProfile({ visible: true });
 
   try {
-    const promises = [];
+    let srtOut = rawSrtContent;
 
-    // Chạy Transcript nếu yêu cầu
     if (updateTranscript) {
-      promises.push(internalUpdateTranscript(context, transcriptPage, rawSrtContent, options));
-    } else {
-      console.log('Bỏ qua bước xử lý Transcript theo yêu cầu.');
-      promises.push(Promise.resolve(rawSrtContent));
-      await transcriptPage.close();
+      srtOut = await internalUpdateTranscript(context, page, rawSrtContent, options);
+      console.log('Đã xong transcript, mở tab mới cho metadata (title/description/tags)...');
+      const metaPage = await context.newPage();
+      try {
+        const meta = await internalUpdateVideoMeta(metaPage, {
+          ...options,
+          srtContent: srtOut,
+        });
+        return { srt: srtOut, ...meta };
+      } finally {
+        await metaPage.close().catch(() => {});
+      }
     }
 
-    // Luôn chạy Meta
-    promises.push(
-      internalUpdateVideoMeta(metaPage, {
-        ...options,
-        srtContent: rawSrtContent,
-      })
-    );
-
-    const [srtOut, meta] = await Promise.all(promises);
-
-    return {
-      srt: srtOut,
-      ...meta,
-    };
+    console.log('Bỏ qua bước xử lý Transcript theo yêu cầu.');
+    const meta = await internalUpdateVideoMeta(page, {
+      ...options,
+      srtContent: rawSrtContent,
+    });
+    return { srt: srtOut, ...meta };
   } finally {
     await context.close();
   }

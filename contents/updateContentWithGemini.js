@@ -293,40 +293,38 @@ export async function updateTranscriptWithGemini(rawSrtContent, options = {}) {
 
 /**
  * Combined function hỗ trợ tham số updateTranscript
+ * Có transcript: xử lý transcript xong trên tab đầu, sau đó mới mở tab mới cho meta (không song song).
  */
 export async function updateContentWithGemini(rawSrtContent, options = {}) {
   const { updateTranscript = true } = options;
 
   console.log('Đang mở Chrome để xử lý Gemini...');
-  const { context, page: transcriptPage } = await openChromeProfile({ visible: true });
-  const metaPage = await context.newPage();
+  const { context, page } = await openChromeProfile({ visible: true });
 
   try {
-    const promises = [];
+    let srtOut = rawSrtContent;
 
-    // Chạy Transcript nếu yêu cầu
     if (updateTranscript) {
-      promises.push(internalUpdateTranscript(context, transcriptPage, rawSrtContent, options));
-    } else {
-      console.log('Bỏ qua bước xử lý Transcript theo yêu cầu.');
-      promises.push(Promise.resolve(rawSrtContent));
-      await transcriptPage.close();
+      srtOut = await internalUpdateTranscript(context, page, rawSrtContent, options);
+      console.log('Đã xong transcript, mở tab mới cho metadata (title/description/tags)...');
+      const metaPage = await context.newPage();
+      try {
+        const meta = await internalUpdateVideoMeta(metaPage, {
+          ...options,
+          srtContent: srtOut,
+        });
+        return { srt: srtOut, ...meta };
+      } finally {
+        await metaPage.close().catch(() => {});
+      }
     }
 
-    // Luôn chạy Meta
-    promises.push(
-      internalUpdateVideoMeta(metaPage, {
-        ...options,
-        srtContent: rawSrtContent,
-      })
-    );
-
-    const [srtOut, meta] = await Promise.all(promises);
-
-    return {
-      srt: srtOut,
-      ...meta,
-    };
+    console.log('Bỏ qua bước xử lý Transcript theo yêu cầu.');
+    const meta = await internalUpdateVideoMeta(page, {
+      ...options,
+      srtContent: rawSrtContent,
+    });
+    return { srt: srtOut, ...meta };
   } finally {
     await context.close();
   }
