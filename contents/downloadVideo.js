@@ -196,6 +196,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
  * @param {string} [options.description] - Mô tả gốc (dùng cho bước Gemini title/description/tags khi video ngắn)
  * @param {string[]} [options.tags] - Tags gốc từ YouTube
  * @param {(p: { url: string, title: string, description: string, tags: string }) => void | Promise<void>} [options.callback] - Sau khi Gemini trả title/description/tags (video ngắn)
+ * @param {boolean} [options.vttOnlyClean] - Khi `subFormat: 'vtt'`: chỉ cleanSrt → SRT và xóa VTT, không gọi Gemini (dùng cho script meta-only).
  */
 async function downloadTranscript(url, options = {}) {
   const {
@@ -206,6 +207,7 @@ async function downloadTranscript(url, options = {}) {
     description = '',
     tags = [],
     callback,
+    vttOnlyClean = false,
   } = options;
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
@@ -241,7 +243,17 @@ async function downloadTranscript(url, options = {}) {
   if (lastErr) throw lastErr;
 
   if (targetFormat === 'vtt') {
-    await processVttTranscriptsWithGemini(url, outputDir, { updateTranscript, videoTitle, description, tags, callback });
+    if (vttOnlyClean) {
+      const { cleanSrt } = await import('./cleanSrt.js');
+      const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
+      for (const file of vttFiles) {
+        const vttPath = path.join(outputDir, file);
+        cleanSrt(vttPath);
+        fs.unlinkSync(vttPath);
+      }
+    } else {
+      await processVttTranscriptsWithGemini(url, outputDir, { updateTranscript, videoTitle, description, tags, callback });
+    }
   }
 
   console.log('Tải transcript xong!');
@@ -395,6 +407,7 @@ async function main() {
     let mergedResult = { ...result };
     try {
       await downloadTranscript(url, {
+        // updateTranscript: false,
         videoTitle: result.title,
         description: result.description,
         tags: result.tags,

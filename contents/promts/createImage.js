@@ -137,3 +137,87 @@ export const createPromptReCreateThumbnailFromSummary = summary => `
 ・使用したテキスト
 ・なぜCTRが上がるかの簡単な説明
 `;
+
+export const createPromptCreate2CHThumbnail = (title, summary) => `
+You are a Japanese YouTube thumbnail designer specialized in dramatic storytelling (2ch-style inspired, but policy-safe).
+
+Your task is to create a highly clickable thumbnail image.
+
+INPUT:
+Title: ${title}
+Summary: ${summary}
+
+GOAL:
+Create a dramatic, emotional, high-CTR thumbnail while keeping content safe and non-violent.
+
+---
+
+STEP 1: Extract
+- Main situation (family conflict, relationship tension, misunderstanding)
+- Characters (wife, husband, mother-in-law, etc.)
+- Emotion (shock, anger, disappointment, tension)
+
+---
+
+STEP 2: Visual Direction
+- Use 2–3 characters max
+- Show strong emotions but NON-VIOLENT:
+  - shocked face (wide eyes, open mouth)
+  - angry face (frowning, tense expression)
+  - crying (tears, sadness)
+  - smug (slight smirk, not evil exaggerated)
+- NO physical violence (no hitting, slapping, harming)
+
+---
+
+STEP 3: Composition
+- Split layout (left vs right conflict)
+- Clear focus on faces
+- Close-up framing (important for mobile CTR)
+
+---
+
+STEP 4: Japanese Text (IMPORTANT)
+- Add short emotional phrases (3–6 words)
+- Avoid offensive/extreme wording
+- Examples:
+  「信じられない」
+  「何これ…」
+  「まさかの展開」
+  「ありえない…」
+
+- Style:
+  - bold font
+  - white / yellow text
+  - black outline
+
+---
+
+STEP 5: Style & Effects
+- High contrast lighting
+- Manga-style speed lines (subtle)
+- Clean background (no chaos)
+- Emphasis on expressions
+
+---
+
+STEP 6: Output
+Return a single detailed IMAGE PROMPT in English including:
+- characters (appearance, emotion)
+- layout
+- lighting
+- Japanese text in quotes
+- style keywords: "Japanese YouTube thumbnail, dramatic, emotional, manga style, high contrast, clean, viral"
+
+---
+
+IMPORTANT RULES:
+- No violence
+- No hateful or abusive wording
+- Focus on emotional tension, not harm
+- Keep it simple and clear
+- Optimize for mobile viewing
+
+OUTPUT:
+Only return the final image prompt.
+`;

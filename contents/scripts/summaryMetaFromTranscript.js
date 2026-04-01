@@ -3,6 +3,7 @@
  * tóm tắt nội dung (summary) + title, description, tags.
  *
  * Không chỉnh từng dòng phụ đề (khác pipeline VTT + update transcript).
+ * Tải VTT rồi `cleanSrt` → SRT (qua `downloadTranscript` + `vttOnlyClean`, không Gemini).
  *
  * Chạy:
  *   node contents/scripts/summaryMetaFromTranscript.js
@@ -85,9 +86,10 @@ async function main() {
   const info = await getVideoInfo(url);
   const videoId = info.metadata?.id || '';
 
-  console.log('Đang tải transcript dạng SRT (không qua bước chỉnh SRT Gemini)...');
+  console.log('Đang tải transcript (VTT → cleanSrt → SRT, không pipeline Gemini)...');
   await downloadTranscript(url, {
-    subFormat: 'srt',
+    subFormat: 'vtt',
+    vttOnlyClean: true,
     outputDir: DOWNLOADS_DIR,
     videoTitle: info.title,
   });
