@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { MAKE_VIDEO_MODE } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +16,45 @@ const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 const IMAGE_OVERLAY_OPACITY = 0.5;
 /** Lớp video (trên cùng) */
 const VIDEO_OVERLAY_OPACITY = 0.5;
+
+/**
+ * Tự động detect NVIDIA NVENC encoder bằng cách test encode thực tế.
+ * Kiểm tra cả encoder CÓ trong ffmpeg VÀ driver NVIDIA đủ mới để chạy.
+ * Nếu OK → dùng h264_nvenc (nhanh gấp 5-10x).
+ * Nếu không → fallback về libx264 veryfast.
+ */
+function detectNvenc() {
+  try {
+    // Test encode 1 frame nhỏ để xác nhận driver thực sự hoạt động
+    execSync('ffmpeg -hide_banner -loglevel error -f lavfi -i nullsrc=s=64x64:d=0.04 -c:v h264_nvenc -f null -', {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    console.log('✅ Detected NVIDIA NVENC — sử dụng GPU encoder.');
+    return true;
+  } catch {
+    console.log('ℹ️ NVENC không khả dụng (driver cũ hoặc không có GPU) — fallback CPU (libx264 veryfast).');
+    return false;
+  }
+}
+
+const HAS_NVENC = detectNvenc();
+
+/**
+ * Lấy resolution (width × height) của video bằng ffprobe.
+ * Dùng để scale overlay chính xác thay vì scale2ref mỗi frame.
+ */
+function getVideoResolution(filePath) {
+  try {
+    const cmd = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${filePath}"`;
+    const result = execSync(cmd, { encoding: 'utf-8' }).trim();
+    const [w, h] = result.split('x').map(Number);
+    if (w > 0 && h > 0) return { width: w, height: h };
+  } catch {
+    // fallback
+  }
+  return { width: 1920, height: 1080 };
+}
 
 function ensureDirs() {
   if (!fs.existsSync(OUTPUT_DIR)) {
@@ -51,23 +90,32 @@ function getImageFilesFromDir(dir) {
 
 async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
   return new Promise((resolve, reject) => {
+    const encoderLabel = HAS_NVENC ? 'GPU (h264_nvenc)' : 'CPU (libx264 veryfast)';
     console.log(`\nĐang xử lý: ${path.basename(videoPath)}`);
+    console.log(`Encoder: ${encoderLabel}`);
     console.log(`Ảnh phủ (dưới, opacity ${IMAGE_OVERLAY_OPACITY}): ${path.basename(imagePath)}`);
     console.log(`Video phủ (trên, loop, opacity ${VIDEO_OVERLAY_OPACITY}): ${path.basename(overlayVideoPath)}`);
 
-    // 0 = video gốc; 1 = ảnh; 2 = video overlay (-stream_loop -1)
-    // Bước 1: ảnh lên nền [0:v] như cũ → [base1]
-    // Bước 2: video scale + alpha, overlay lên [base1] tới hết video gốc
-    const filterComplex =
-      `[1:v][0:v]scale2ref=w=iw:h=ih[img][vid];` +
-      `[img]format=argb,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
-      `[vid][timg]overlay=0:0[base1];` +
-      `[2:v][base1]scale2ref=w=iw:h=ih[ov][base];` +
-      `[ov]format=argb,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
-      `[base][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
+    // Lấy resolution video gốc 1 lần, dùng scale cố định thay vì scale2ref mỗi frame
+    const { width, height } = getVideoResolution(videoPath);
 
-    const args = [
-      '-y',
+    // Filter tối ưu: scale cố định thay vì scale2ref, giảm chuyển đổi pixel format
+    // 0 = video gốc; 1 = ảnh; 2 = video overlay (-stream_loop -1)
+    const filterComplex =
+      `[1:v]scale=${width}:${height},format=argb,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
+      `[0:v][timg]overlay=0:0[base1];` +
+      `[2:v]scale=${width}:${height},format=argb,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
+      `[base1][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
+
+    // Input args
+    const args = ['-y', '-threads', '0'];
+
+    // Nếu có GPU, dùng hwaccel để decode nhanh hơn
+    if (HAS_NVENC) {
+      args.push('-hwaccel', 'cuda');
+    }
+
+    args.push(
       '-i',
       videoPath,
       '-i',
@@ -83,30 +131,17 @@ async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
       '-map',
       '0:a?',
       '-shortest',
-      '-c:v',
-      'libx264',
-      '-profile:v',
-      'main',
-      '-level',
-      '4.0',
-      '-pix_fmt',
-      'yuv420p',
-      '-crf',
-      '28',
-      '-preset',
-      'medium',
-      '-tag:v',
-      'avc1',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
-      '-movflags',
-      '+faststart',
-      '-f',
-      'mp4',
-      outputPath,
-    ];
+    );
+
+    // Encoder args: NVENC nếu có GPU, libx264 veryfast nếu không
+    if (HAS_NVENC) {
+      args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1');
+    } else {
+      args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'veryfast', '-tag:v', 'avc1');
+    }
+
+    // Audio: stream copy thay vì re-encode (nhanh hơn nhiều)
+    args.push('-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', outputPath);
 
     const ffmpeg = spawn('ffmpeg', args, { stdio: 'inherit' });
 
@@ -184,15 +219,12 @@ async function main(options = {}) {
       } catch (e) {}
     }
 
-    // Lấy overlays từ destFolder hoặc mặc định OVERLAY_DIR
-    let images = getFiles(destFolder, ['.png', '.jpg', '.jpeg', '.webp']);
-    if (images.length === 0) images = getFiles(OVERLAY_DIR, ['.png', '.jpg', '.jpeg', '.webp']);
-
-    let overlayVideos = getFiles(destFolder, ['.mp4', '.webm', '.mov', '.mkv']);
-    if (overlayVideos.length === 0) overlayVideos = getFiles(OVERLAY_DIR, ['.mp4', '.webm', '.mov', '.mkv']);
+    // Luôn lấy overlay từ backgrounds/overlay
+    const images = getFiles(OVERLAY_DIR, ['.png', '.jpg', '.jpeg', '.webp']);
+    const overlayVideos = getFiles(OVERLAY_DIR, ['.mp4', '.webm', '.mov', '.mkv']);
 
     if (images.length === 0 || overlayVideos.length === 0) {
-      throw new Error(`Cần ít nhất 1 ảnh và 1 video overlay trong ${destFolder} hoặc ${OVERLAY_DIR}`);
+      throw new Error(`Cần ít nhất 1 ảnh và 1 video overlay trong ${OVERLAY_DIR}`);
     }
 
     const overlayImage = images[0];
