@@ -13,7 +13,7 @@ export const flowSettings = {
   FLOW_PROJECT_ID: '3550d75f-a7ac-41ec-9ec7-0c23bc5efb95',
 };
 
-export const MAX_GEMINI_CONCURRENT = 2; // số lượng tối đa 5 browser (tab) đồng thời
+export const MAX_GEMINI_CONCURRENT = 3; // số lượng tối đa 5 browser (tab) đồng thời
 
 export const GEMINI_CHUNK_SIZE = {
   UPDATE_TRANSCRIPT: 200,

@@ -3,7 +3,7 @@
  * KẾT HỢP TUẦN TỰ (dưới 30 phút) VÀ SONG SONG (trên 30 phút).
  */
 
-import { openChromeProfile } from './scripts/makeChromeProfile.js';
+import { openChromeProfile } from './makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
 import {
   createPromptToCreateSummaryContent,
@@ -149,7 +149,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, description,
   const metaRaw = await sendPromptToPage(
     page,
     createPromptToCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)'
+    'metadata video (title, desc, tags)',
   );
 
   // 5. Parse kết quả
