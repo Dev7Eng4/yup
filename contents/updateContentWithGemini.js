@@ -47,7 +47,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
   );
 
   // const inputEl = await page.$(inputSelector);
@@ -145,7 +145,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
   const metaRaw = await sendPromptToPage(
     page,
     createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)'
+    'metadata video (title, desc, tags)',
   );
 
   const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);

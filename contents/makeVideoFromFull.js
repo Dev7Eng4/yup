@@ -300,18 +300,6 @@ async function main(options = {}) {
 
     console.log(`\nHoàn thành xử lý ${items.length} video.`);
 
-    // Đồng bộ trạng thái
-    try {
-      console.log('\nĐang tự động đồng bộ trạng thái vào file Excel...');
-      const syncScript = path.join(ROOT, 'contents', 'scripts', 'syncStatusToExcel.js');
-      if (fs.existsSync(syncScript)) {
-        const { execSync } = await import('child_process');
-        execSync(`node "${syncScript}"`, { stdio: 'inherit' });
-      }
-    } catch (e) {
-      console.error('Lỗi tự động đồng bộ:', e.message);
-    }
-
     return;
   }
 }
