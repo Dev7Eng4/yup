@@ -141,7 +141,7 @@ async function downloadThumbnail(url, options = {}) {
  */
 async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
   const { cleanSrt } = await import('./cleanSrt.js');
-  const { updateContentWithGemini } = await import('./updateContentWithGemini.js');
+  const { updateContentWithGemini } = await import('./updateContentWithGemini2CH.js');
 
   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
   for (const file of vttFiles) {
@@ -304,7 +304,7 @@ async function downloadAudio(url, options = {}) {
  * @param {string} url - Link YouTube
  * @param {object} [options]
  * @param {(p: { url: string, title: string, description: string, tags: string }) => void | Promise<void>} [options.callback] - Truyền xuống downloadTranscript (batch: cập nhật progress từ makeVideoFromAudio)
- * @returns {Promise<{title: string} | null>} - Thông tin video nếu thành công, null nếu lỗi
+ * @returns {Promise<(object & { filePath?: string }) | null>} - Thông tin video; `filePath` = file video trong downloads/ (khi tải được)
  */
 async function downloadSingleVideo(url, options = {}) {
   const { callback, mode = MAKE_VIDEO_MODE.REUP_FULL } = options;
@@ -344,11 +344,18 @@ async function downloadSingleVideo(url, options = {}) {
       console.warn('Không tải được transcript:', err.message);
     }
 
-    // Sau khi tải xong, tìm file thực tế trong folder downloads để trả về filePath chính xác
-    // const files = fs.readdirSync(DEFAULT_OUTPUT_DIR).filter(f => /\.(mp4|m4a|mp3|mkv|mov|avi|webm)$/i.test(f));
-    // if (files.length > 0) {
-    //   result.filePath = path.join(DEFAULT_OUTPUT_DIR, files[0]);
-    // }
+    const videoExt = /\.(mp4|mkv|mov|webm|avi)$/i;
+    const mediaFiles = fs.readdirSync(DEFAULT_OUTPUT_DIR).filter(f => videoExt.test(f));
+    const videoId = result.metadata?.id;
+    if (mediaFiles.length > 0) {
+      let pick = mediaFiles[0];
+      if (videoId) {
+        const byId = mediaFiles.find(f => f.includes(videoId));
+        if (byId) pick = byId;
+      }
+      result.filePath = path.join(DEFAULT_OUTPUT_DIR, pick);
+    }
+
     return result;
   } catch (err) {
     console.error(`Lỗi tải ${url}:`, err.message);
