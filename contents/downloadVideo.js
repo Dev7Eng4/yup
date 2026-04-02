@@ -9,7 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { detectVideoLang, getLanguageOptions } from './utils/detectLanguage.util.js';
 
-import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { MAKE_VIDEO_MODE, LANGUAGES_NEED_UPDATE_TRANSCRIPT } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, '..', 'downloads');
@@ -197,6 +197,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
  * @param {string[]} [options.tags] - Tags gốc từ YouTube
  * @param {(p: { url: string, title: string, description: string, tags: string }) => void | Promise<void>} [options.callback] - Sau khi Gemini trả title/description/tags (video ngắn)
  * @param {boolean} [options.vttOnlyClean] - Khi `subFormat: 'vtt'`: chỉ cleanSrt → SRT và xóa VTT, không gọi Gemini (dùng cho script meta-only).
+ * Chỉnh từng dòng SRT qua Gemini khi `updateTranscript` và ngôn ngữ phụ đề đã tải ∈ `LANGUAGES_NEED_UPDATE_TRANSCRIPT` (constants); ngược lại vẫn có thể chạy bước metadata Gemini.
  */
 async function downloadTranscript(url, options = {}) {
   const {
@@ -216,6 +217,8 @@ async function downloadTranscript(url, options = {}) {
   const detectedLang = detectVideoLang(videoTitle);
   const langOrder = [detectedLang, ...getLanguageOptions()].filter((l, i, a) => a.indexOf(l) === i);
   let lastErr = null;
+  /** Ngôn ngữ phụ đề đã tải được (mã ISO, vd: ja, ko) */
+  let transcriptLang = null;
 
   for (const lang of langOrder) {
     try {
@@ -233,6 +236,7 @@ async function downloadTranscript(url, options = {}) {
         addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
       });
       lastErr = null;
+      transcriptLang = lang;
       break;
     } catch (err) {
       lastErr = err;
@@ -241,6 +245,19 @@ async function downloadTranscript(url, options = {}) {
   }
 
   if (lastErr) throw lastErr;
+
+  const needsGeminiTranscriptUpdate =
+    updateTranscript &&
+    transcriptLang != null &&
+    LANGUAGES_NEED_UPDATE_TRANSCRIPT.some(l => String(l).toLowerCase() === String(transcriptLang).toLowerCase());
+
+  if (updateTranscript && transcriptLang != null && !needsGeminiTranscriptUpdate) {
+    console.log(
+      `Phụ đề ${String(transcriptLang).toUpperCase()}: bỏ chỉnh từng dòng qua Gemini (chỉ áp dụng: ${LANGUAGES_NEED_UPDATE_TRANSCRIPT.join(
+        ', '
+      )}). Vẫn chạy metadata/title nếu có.`
+    );
+  }
 
   if (targetFormat === 'vtt') {
     if (vttOnlyClean) {
@@ -252,7 +269,13 @@ async function downloadTranscript(url, options = {}) {
         fs.unlinkSync(vttPath);
       }
     } else {
-      await processVttTranscriptsWithGemini(url, outputDir, { updateTranscript, videoTitle, description, tags, callback });
+      await processVttTranscriptsWithGemini(url, outputDir, {
+        updateTranscript: needsGeminiTranscriptUpdate,
+        videoTitle,
+        description,
+        tags,
+        callback,
+      });
     }
   }
 
@@ -407,9 +430,9 @@ async function main() {
     fs.writeFileSync(OUTPUT_FILE, output, 'utf-8');
     console.log('Đã lưu thông tin vào downloads/output.json');
 
+    await downloadThumbnail(url);
     await downloadVideo(url);
     await downloadAudio(url);
-    await downloadThumbnail(url);
 
     let mergedResult = { ...result };
     try {

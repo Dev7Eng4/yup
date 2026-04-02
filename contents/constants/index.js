@@ -19,3 +19,12 @@ export const GEMINI_CHUNK_SIZE = {
   UPDATE_TRANSCRIPT: 200,
   SUMMARY_CONTENT: 500,
 };
+
+export const LANGUAGES_NEED_UPDATE_TRANSCRIPT = ['ja'];
+
+export const META_DATA = {
+  NICHE: 'Niche',
+  TITLE: 'Title',
+  DESCRIPTION: 'Description',
+  TAGS: 'Tags',
+};

@@ -1,21 +1,3 @@
-/**
- * Text-to-image: chỉ mô tả ý tưởng, không kèm ảnh tham chiếu.
- * @param {string} [hint] - Gợi ý thêm (tiếng Anh hoặc tiếng nhật tùy model)
- */
-export const createPromptNewImage = (hint = '') =>
-  `
-Create a single high-CTR YouTube thumbnail image.
-
-Style:
-- Bold, readable text hierarchy, strong contrast
-- Typical Japanese YouTube thumbnail energy if the topic fits
-- Sharp, no watermark, no distorted faces
-
-${hint ? `Additional direction:\n${hint}\n` : ''}
-
-Output: one striking thumbnail image only.
-`.trim();
-
 export const createPromptReCreateThumbnail = () =>
   `
 You are a professional YouTube thumbnail designer.
@@ -220,4 +202,30 @@ IMPORTANT RULES:
 
 OUTPUT:
 Only return the final image prompt.
+`;
+
+export const createThumbnailFromImage = (title, summary) => `
+添付した古いサムネイル画像をベースに、提供された以下の「動画タイトル」と「内容要約」をAIが分析し、最も高クリック率（CTR）が期待できるYouTubeサムネイルを生成してください。
+
+【入力情報】
+動画タイトル: ${title}
+動画の内容要約: ${summary}
+
+【AIへの生成指示 - 自動分析とテキスト考案】
+
+分析: AIは提供された「動画タイトル」と「内容要約」を読み、ストーリーの核心、感情的なピーク、衝撃的な事実を特定してください。
+
+テキスト考案 (自動): 分析結果に基づき、視聴者の好奇心を極限まで刺激する「メインテキスト（巨大）」と、それを補足する「サブテキスト（中）」をAI独自に考案してください。
+
+テキスト配置: 考案したテキストを画像内に大きく、太いフォントで配置してください。色は赤、黄色、白などの高コントラストなものにし、黒い縁取りを付けること。
+
+【デザインの指示 - 2chスタイル】
+
+キャラクター: 古い画像のキャラクター（2chのアスキーアート風スタイル）を維持しつつ、表情をより強調（絶望、衝撃、狂気的な笑いなど）してください。状況に合わせて服装や小物を少し追加しても構いません。
+
+背景と配色: 2ch解説動画特有の、少しダークで緊張感のある背景にしてください。ネオン効果や集中線を追加して、視線を中央に集めること。
+
+ポリシー遵守: 過度な暴力描写や公序良俗に反する表現は避け、ストーリーの劇的な展開を象徴する表現に留めてください。
+
+2chの独特な雰囲気を守りつつ、視聴者が思わずクリックしたくなるような「引き」の強いデザインをお願いします。
 `;

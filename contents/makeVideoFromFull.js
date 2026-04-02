@@ -18,6 +18,13 @@ const IMAGE_OVERLAY_OPACITY = 0.5;
 const VIDEO_OVERLAY_OPACITY = 0.5;
 
 /**
+ * Zoom trung tâm + cắt 4 phía trên video gốc (input 0) trước khi overlay.
+ * 0 = tắt. Ví dụ 10 = phóng to rồi cắt ~10% chiều rộng từ trái và phải (và tương tự trên/dưới), giữ độ phân giải đầu ra = video gốc.
+ * Giới hạn thực tế: 1–49 (từ 50 trở lên không hợp lệ cho công thức scale/crop).
+ */
+const VIDEO_CROP_PERCENT = 0;
+
+/**
  * Tự động detect NVIDIA NVENC encoder bằng cách test encode thực tế.
  * Kiểm tra cả encoder CÓ trong ffmpeg VÀ driver NVIDIA đủ mới để chạy.
  * Nếu OK → dùng h264_nvenc (nhanh gấp 5-10x).
@@ -56,6 +63,8 @@ function getVideoResolution(filePath) {
   return { width: 1920, height: 1080 };
 }
 
+const OVERLAY_CACHE_DIR = path.join(OVERLAY_DIR, '.cache');
+
 function ensureDirs() {
   if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -63,6 +72,38 @@ function ensureDirs() {
   if (!fs.existsSync(OVERLAY_DIR)) {
     fs.mkdirSync(OVERLAY_DIR, { recursive: true });
   }
+  if (!fs.existsSync(OVERLAY_CACHE_DIR)) {
+    fs.mkdirSync(OVERLAY_CACHE_DIR, { recursive: true });
+  }
+}
+
+/**
+ * Pre-process ảnh overlay: scale đúng WxH + nhân sẵn alpha → lưu cache PNG.
+ * Lần sau cùng resolution + opacity + ảnh gốc → dùng lại, không cần tính lại mỗi frame.
+ * Trả về đường dẫn file cache (RGBA PNG, đã baked alpha).
+ */
+function getPreprocessedImageOverlay(imagePath, width, height, opacity) {
+  const srcStat = fs.statSync(imagePath);
+  const cacheKey = `img_${path.parse(imagePath).name}_${width}x${height}_a${Math.round(opacity * 100)}_${srcStat.mtimeMs}`;
+  const cachePath = path.join(OVERLAY_CACHE_DIR, `${cacheKey}.png`);
+
+  if (fs.existsSync(cachePath)) {
+    console.log(`Dùng cache ảnh overlay: ${path.basename(cachePath)}`);
+    return cachePath;
+  }
+
+  console.log(`Pre-processing ảnh overlay → ${width}x${height}, alpha=${opacity}...`);
+  try {
+    execSync(
+      `ffmpeg -hide_banner -loglevel error -y -i "${imagePath}" -vf "scale=${width}:${height},format=rgba,colorchannelmixer=aa=${opacity}" -frames:v 1 "${cachePath}"`,
+      { encoding: 'utf-8', stdio: 'pipe' },
+    );
+    console.log(`Đã tạo cache: ${path.basename(cachePath)}`);
+  } catch (err) {
+    console.warn('Không tạo được cache ảnh overlay, dùng pipeline cũ:', err.message);
+    return null;
+  }
+  return cachePath;
 }
 
 function getFiles(dir, exts) {
@@ -90,36 +131,52 @@ function getImageFilesFromDir(dir) {
 
 async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
   return new Promise((resolve, reject) => {
-    const encoderLabel = HAS_NVENC ? 'GPU (h264_nvenc)' : 'CPU (libx264 veryfast)';
+    const encoderLabel = HAS_NVENC ? 'GPU (h264_nvenc p1)' : 'CPU (libx264 ultrafast)';
     console.log(`\nĐang xử lý: ${path.basename(videoPath)}`);
     console.log(`Encoder: ${encoderLabel}`);
     console.log(`Ảnh phủ (dưới, opacity ${IMAGE_OVERLAY_OPACITY}): ${path.basename(imagePath)}`);
     console.log(`Video phủ (trên, loop, opacity ${VIDEO_OVERLAY_OPACITY}): ${path.basename(overlayVideoPath)}`);
 
-    // Lấy resolution video gốc 1 lần, dùng scale cố định thay vì scale2ref mỗi frame
     const { width, height } = getVideoResolution(videoPath);
 
-    // Filter tối ưu: scale cố định thay vì scale2ref, giảm chuyển đổi pixel format
-    // 0 = video gốc; 1 = ảnh; 2 = video overlay (-stream_loop -1)
+    // [A] Pre-process ảnh overlay: scale + alpha 1 lần, dùng cache
+    const cachedImage = getPreprocessedImageOverlay(imagePath, width, height, IMAGE_OVERLAY_OPACITY);
+    const useImageCache = cachedImage != null;
+
+    const p = Math.min(49, Math.max(0, Math.floor(Number(VIDEO_CROP_PERCENT)) || 0));
+    const inner = 100 - 2 * p;
+    const headCrop =
+      p > 0 && inner > 0
+        ? `[0:v]scale=iw*100/${inner}:ih*100/${inner},crop=iw*${inner}/100:ih*${inner}/100[v0];`
+        : '';
+    const vid0 = p > 0 && inner > 0 ? '[v0]' : '[0:v]';
+    if (p > 0) {
+      console.log(
+        `Video gốc: zoom + crop ${p}% mỗi phía (4 phía), đầu ra ${width}x${height}.`,
+      );
+    }
+
+    // [A] Ảnh đã baked alpha → chỉ overlay thuần, không scale/format/colorchannelmixer mỗi frame
+    // [E] Video overlay: dùng yuva420p thay vì argb (nhẹ hơn ~50% bộ nhớ/frame)
+    const imgFilter = useImageCache
+      ? `${vid0}[1:v]overlay=0:0[base1];`
+      : `[1:v]scale=${width}:${height},format=yuva420p,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
+        `${vid0}[timg]overlay=0:0[base1];`;
+
     const filterComplex =
-      `[1:v]scale=${width}:${height},format=argb,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
-      `[0:v][timg]overlay=0:0[base1];` +
-      `[2:v]scale=${width}:${height},format=argb,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
+      headCrop +
+      imgFilter +
+      `[2:v]scale=${width}:${height},format=yuva420p,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
       `[base1][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
 
-    // Input args
+    // [C] Không dùng -hwaccel cuda: filter graph chạy CPU, hwaccel gây overhead copy GPU↔RAM
     const args = ['-y', '-threads', '0'];
-
-    // Nếu có GPU, dùng hwaccel để decode nhanh hơn
-    if (HAS_NVENC) {
-      args.push('-hwaccel', 'cuda');
-    }
 
     args.push(
       '-i',
       videoPath,
       '-i',
-      imagePath,
+      useImageCache ? cachedImage : imagePath,
       '-stream_loop',
       '-1',
       '-i',
@@ -133,14 +190,13 @@ async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
       '-shortest',
     );
 
-    // Encoder args: NVENC nếu có GPU, libx264 veryfast nếu không
+    // [F] Encoder: preset nhanh nhất — p1 (NVENC) / ultrafast (libx264)
     if (HAS_NVENC) {
-      args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1');
+      args.push('-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1');
     } else {
-      args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'veryfast', '-tag:v', 'avc1');
+      args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'ultrafast', '-tag:v', 'avc1');
     }
 
-    // Audio: stream copy thay vì re-encode (nhanh hơn nhiều)
     args.push('-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', outputPath);
 
     const ffmpeg = spawn('ffmpeg', args, { stdio: 'inherit' });

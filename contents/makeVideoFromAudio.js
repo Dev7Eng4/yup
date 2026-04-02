@@ -24,6 +24,22 @@ const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
 export const SPEED = 0.91;
 
+function detectNvenc() {
+  try {
+    execSync('ffmpeg -hide_banner -loglevel error -f lavfi -i nullsrc=s=64x64:d=0.04 -c:v h264_nvenc -f null -', {
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    });
+    console.log('✅ Detected NVIDIA NVENC — sử dụng GPU encoder.');
+    return true;
+  } catch {
+    console.log('ℹ️ NVENC không khả dụng — fallback CPU (libx264 ultrafast).');
+    return false;
+  }
+}
+
+const HAS_NVENC = detectNvenc();
+
 /**
  * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
  * - < 25 phút: 15
@@ -244,7 +260,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     } else {
       args.push('-i', segments[0].path);
     }
-    args.push('-vf', vf, '-t', String(targetDuration), '-c:v', 'libx264', '-crf', '23', '-preset', 'medium', '-an', outputPath);
+    args.push('-vf', vf, '-t', String(targetDuration), '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast', '-an', outputPath);
     const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
     if (r.error) throw r.error;
     if (r.status !== 0) throw new Error(`ffmpeg thoát mã ${r.status}`);
@@ -292,11 +308,11 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-c:v',
     'libx264',
     '-crf',
-    '23',
+    '18',
     '-preset',
-    'medium',
+    'ultrafast',
     '-an',
-    outputPath,
+    outputPath
   );
 
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
@@ -324,15 +340,15 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
   const pctChange = ((1 / speed - 1) * 100).toFixed(1);
   console.log(
     `Đang chỉnh tốc độ audio (SPEED=${speed}: ${speed < 1 ? 'chậm hơn → dài hơn' : 'nhanh hơn → ngắn hơn'} ~${Math.abs(
-      pctChange,
-    )}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`,
+      pctChange
+    )}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`
   );
   convertAudioFile(sourcePath, destPath, speed);
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
     `Sau chỉnh tốc độ: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
-      1,
-    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`,
+      1
+    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`
   );
 }
 
@@ -508,8 +524,8 @@ async function processOne(bgNameArg, options = {}) {
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
     `Thời lượng audio sau SPEED=${SPEED} (dùng cho stock + merge): ${formatClockDuration(
-      audioDurationAfterTempo,
-    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
+      audioDurationAfterTempo
+    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`
   );
 
   // 2. Lấy video stock dựa trên thời lượng MỚI
@@ -541,8 +557,8 @@ async function processOne(bgNameArg, options = {}) {
     const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
       `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
-        1,
-      )}s)...`,
+        1
+      )}s)...`
     );
   } else {
     console.log('Đang tạo nền stock (1 clip, loop nếu clip ngắn hơn audio)...');
@@ -552,9 +568,10 @@ async function processOne(bgNameArg, options = {}) {
 
   const tempSubPath = subtitlePath ? path.join(OUTPUT_DIR, 'temp_sub.ass') : null;
 
-  const scaleFilter = 'scale=-2:720';
-  const videoToScale = `[0:v]${scaleFilter}[vpadded]`;
-  const videoEncode = '-c:v libx264 -crf 28 -preset medium -c:a aac -b:a 128k';
+  const videoToScale = `[0:v]null[vpadded]`;
+  const videoEncodeArgs = HAS_NVENC
+    ? ['-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1', '-c:a', 'aac', '-b:a', '128k']
+    : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'ultrafast', '-tag:v', 'avc1', '-c:a', 'aac', '-b:a', '128k'];
   const logoPathForMerge = options.logoPath != null ? options.logoPath : LOGO_PATH;
   // const hasLogo = fs.existsSync(logoPathForMerge);
   const hasLogo = false;
@@ -566,49 +583,54 @@ async function processOne(bgNameArg, options = {}) {
     return `[2:v]scale=${LOGO_SIZE}:${LOGO_SIZE},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${geqExpr}'[logo];[${inputLabel}][logo]overlay=main_w-overlay_w-${LOGO_MARGIN_RIGHT}:${LOGO_MARGIN_TOP}[vout]`;
   };
 
+  const mergeEncoderLabel = HAS_NVENC ? 'GPU (h264_nvenc p1)' : 'CPU (libx264 ultrafast)';
+
   if (subtitlePath) {
-    // Thay vì dùng subtitle gốc, ta chuyển đổi file sang định dạng ASS có sẵn Box Opacity
     convertSrtToAss(subtitlePath, tempSubPath);
 
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
-
-    // Sử dụng drawbox của FFmpeg để tạo một thanh màu đen cắt ngang video
     const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
-
-    // Subtitle được căn chỉnh đè lên bằng file ASS
     const subFilter = `subtitles='${subPathEscaped}'`;
 
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
-    const inputs = hasLogo
-      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${logoPathForMerge}"`
-      : `-i "${tempVideoPath}" -i "${workingAudioPath}"`;
-    console.log('Đang merge video + audio + Dịch subtitle sang ASS (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
-    execSync(
-      `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
-      {
-        stdio: 'inherit',
-      },
+
+    const mergeArgs = ['-y', '-i', tempVideoPath, '-i', workingAudioPath];
+    if (hasLogo) mergeArgs.push('-i', logoPathForMerge);
+    mergeArgs.push(
+      '-filter_complex', filterComplexFinal,
+      '-map', '[vout]', '-map', '1:a',
+      ...videoEncodeArgs,
+      '-t', String(audioDurationAfterTempo),
+      outputPath,
     );
+
+    console.log(`Đang merge video + audio + subtitle ASS (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));
+    const mr = spawnSync('ffmpeg', mergeArgs, { stdio: 'inherit', shell: false });
+    if (mr.error) throw mr.error;
+    if (mr.status !== 0) throw new Error(`ffmpeg merge thoát mã ${mr.status}`);
+
     fs.unlinkSync(tempSubPath);
     if (scaledSrtPath && fs.existsSync(scaledSrtPath)) fs.unlinkSync(scaledSrtPath);
   } else {
-    let filterComplexFinal;
-    if (hasLogo) {
-      filterComplexFinal = `${videoToScale};${buildLogoOverlay('vpadded')}`;
-    } else {
-      filterComplexFinal = `${videoToScale};[vpadded]copy[vout]`;
-    }
-    const inputs = hasLogo
-      ? `-i "${tempVideoPath}" -i "${workingAudioPath}" -i "${logoPathForMerge}"`
-      : `-i "${tempVideoPath}" -i "${workingAudioPath}"`;
-    console.log('Đang merge video + audio (720p, chất lượng trung bình)' + (hasLogo ? ' + logo...' : '...'));
-    execSync(
-      `ffmpeg -y ${inputs} -filter_complex "${filterComplexFinal}" -map "[vout]" -map 1:a ${videoEncode} -t ${audioDurationAfterTempo} "${outputPath}"`,
-      {
-        stdio: 'inherit',
-      },
+    const filterComplexFinal = hasLogo
+      ? `${videoToScale};${buildLogoOverlay('vpadded')}`
+      : `${videoToScale};[vpadded]copy[vout]`;
+
+    const mergeArgs = ['-y', '-i', tempVideoPath, '-i', workingAudioPath];
+    if (hasLogo) mergeArgs.push('-i', logoPathForMerge);
+    mergeArgs.push(
+      '-filter_complex', filterComplexFinal,
+      '-map', '[vout]', '-map', '1:a',
+      ...videoEncodeArgs,
+      '-t', String(audioDurationAfterTempo),
+      outputPath,
     );
+
+    console.log(`Đang merge video + audio (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));
+    const mr = spawnSync('ffmpeg', mergeArgs, { stdio: 'inherit', shell: false });
+    if (mr.error) throw mr.error;
+    if (mr.status !== 0) throw new Error(`ffmpeg merge thoát mã ${mr.status}`);
   }
 
   fs.unlinkSync(tempVideoPath);
@@ -714,7 +736,7 @@ async function main(options = {}) {
       console.log(`Logo kênh (dùng cho mọi video batch): ${batchChannelLogoPath}`);
       if (channelLogoImages.length > 1) {
         console.warn(
-          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`,
+          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`
         );
       }
     }

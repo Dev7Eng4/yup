@@ -8,7 +8,7 @@ import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/upd
 import { createPromptSummaryContent, createPromptToMergeSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 import { clickElement } from './utils/dom.util.js';
-import { GEMINI_CHUNK_SIZE } from './constants/index.js';
+import { GEMINI_CHUNK_SIZE, META_DATA } from './constants/index.js';
 
 const GEMINI_URL = 'https://gemini.google.com/app';
 const MAX_CONCURRENT = 2; // số lượng tối đa 5 browser (tab) đồng thời
@@ -47,7 +47,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
   );
 
   // const inputEl = await page.$(inputSelector);
@@ -94,6 +94,34 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
   const result = await sendPromptToPage(page, prompt, `phần ${index + 1}/${totalChunks}`);
 
   return { index, result };
+}
+
+/**
+ * Parse phản hồi đúng theo # Output Format trong createPromptCreateMetaInfo:
+ * Niche → Title → Description → Tags (mỗi nhãn một dòng, nội dung phía dưới).
+ */
+function parseCreateMetaInfoResponse(metaRaw) {
+  let text = String(metaRaw || '').trim();
+  text = text.replace(/^```[^\n]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+
+  const L = META_DATA;
+  const nicheMatch = text.match(
+    new RegExp(`^${L.NICHE}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.TITLE}\\s*\\n|$)`, 'im'),
+  );
+  const titleMatch = text.match(
+    new RegExp(`^${L.TITLE}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.DESCRIPTION}\\s*\\n|$)`, 'im'),
+  );
+  const descMatch = text.match(
+    new RegExp(`^${L.DESCRIPTION}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.TAGS}\\s*\\n|$)`, 'im'),
+  );
+  const tagsMatch = text.match(new RegExp(`^${L.TAGS}\\s*\\n([\\s\\S]*)$`, 'im'));
+
+  return {
+    niche: nicheMatch ? nicheMatch[1].trim() : '',
+    title: titleMatch ? titleMatch[1].trim() : '',
+    description: descMatch ? descMatch[1].trim() : '',
+    tags: tagsMatch ? tagsMatch[1].trim() : '',
+  };
 }
 
 /**
@@ -145,17 +173,16 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
   const metaRaw = await sendPromptToPage(
     page,
     createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (title, desc, tags)',
+    'metadata video (niche, title, desc, tags)',
   );
 
-  const titleMatch = metaRaw.match(/【タイトル】\s*([\s\S]*?)(?=\n\n?【|$)/);
-  const descMatch = metaRaw.match(/【動画説明文】\s*([\s\S]*?)(?=\n\n?【|$)/);
-  const tagsMatch = metaRaw.match(/【タグ】\s*([\s\S]*?)(?=\n\n?【|$)/);
+  const parsed = parseCreateMetaInfoResponse(metaRaw);
 
   return {
-    title: titleMatch ? titleMatch[1].trim() : title,
-    description: descMatch ? descMatch[1].trim() : '',
-    tags: tagsMatch ? tagsMatch[1].trim() : '',
+    niche: parsed.niche,
+    title: parsed.title || title,
+    description: parsed.description,
+    tags: parsed.tags,
     summary: finalSummaryForMeta,
   };
 }
