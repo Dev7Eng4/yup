@@ -84,7 +84,7 @@ export async function generateImageThumbnailWithFlow(prompt, pathSave, FROM_GEMI
           }
           return false;
         },
-        { timeout: 3 * 60 * 1000 }
+        { timeout: 3 * 60 * 1000 },
       ),
     ]);
 

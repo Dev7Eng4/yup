@@ -25,8 +25,6 @@ async function loadVideoInfoPrompts(language) {
   }
 }
 
-const MAX_CONCURRENT = 2; // số lượng tối đa 5 browser (tab) đồng thời
-
 /**
  * Láy thời lượng video (tính bằng phút) dựa vào dòng cue SRT cuối cùng
  */
@@ -49,9 +47,6 @@ function getSrtDurationInMinutes(cuesArray) {
  * Gửi prompt lên giao diện chat hiện tại trên page và trả về kết quả
  */
 async function sendPromptToPage(page, prompt, label) {
-  // const inputSelector = 'div.ql-editor[contenteditable="true"], .ql-editor, rich-textarea .ql-editor';
-  // await page.waitForSelector(inputSelector, { timeout: 15000 });
-
   // await clickElement(
   //   page,
   //   '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[3]/div[1]/bard-mode-switcher/div/button'
@@ -61,18 +56,9 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea'
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
   );
 
-  // const inputEl = await page.$(inputSelector);
-  // const inputBbox = await inputEl.boundingBox();
-  // if (inputBbox) {
-  //   await page.mouse.move(inputBbox.x + inputBbox.width / 2, inputBbox.y + inputBbox.height / 2, { steps: 10 });
-  //   await page.waitForTimeout(100);
-  //   await page.mouse.down();
-  //   await page.waitForTimeout(50);
-  //   await page.mouse.up();
-  // }
   await page.waitForTimeout(500);
 
   await page.keyboard.down('Control');
@@ -199,7 +185,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, language }) 
   const metaRaw = await sendPromptToPage(
     page,
     prompts.createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (niche, title, desc, tags)'
+    'metadata video (niche, title, desc, tags)',
   );
 
   const parsed = parseCreateMetaInfoResponse(metaRaw);
@@ -262,7 +248,7 @@ async function internalUpdateTranscript(context, initialPage, rawSrtContent, opt
       if (i < totalChunks - 1) await initialPage.waitForTimeout(2000);
     }
   } else {
-    const activeConcurrency = Math.min(MAX_CONCURRENT, totalChunks);
+    const activeConcurrency = Math.min(GEMINI_CONFIG.MAX_CONCURRENT, totalChunks);
     console.log(`Video >= 30 phút, Xử lý ĐỒNG THỜI (${activeConcurrency} tabs song song)...`);
 
     const pages = [initialPage];
