@@ -1,0 +1,231 @@
+export const createPromptReCreateThumbnail = () =>
+  `
+You are a professional YouTube thumbnail designer.
+
+Task:
+Take the text from Image A (image with text) and place it onto Image B (clean image) to create a high-CTR YouTube thumbnail.
+
+Instructions:
+
+1. Text extraction:
+- Extract ALL text from Image A exactly as it appears
+- Keep original language (Japanese if present)
+- DO NOT translate, rewrite, or summarize
+
+2. Text styling (VERY IMPORTANT):
+- Recreate bold, eye-catching YouTube thumbnail text
+- Match font style as closely as possible (thick, strong, impactful)
+- Use large font size for readability on mobile
+- Apply effects if present: stroke (outline), drop shadow, glow
+- Ensure high contrast between text and background
+
+3. Layout & positioning:
+- Place text in a visually balanced position similar to Image A
+- Keep composition clean and professional
+- Avoid covering faces or key subjects
+- Follow typical Japanese YouTube thumbnail style (big text, dramatic layout)
+
+4. CTR optimization:
+- Make text instantly readable at small sizes
+- Emphasize key words (bigger / bolder if needed)
+- Keep strong visual hierarchy
+- Make the thumbnail feel clickable and engaging
+
+5. Enhancement for Japanese audience:
+- Use bold and dramatic visual style common in Japanese YouTube thumbnails
+- Slightly exaggerate text size and contrast for higher click-through rate
+- Prioritize readability over strict visual accuracy if needed
+
+6. Image quality:
+- Sharp, high resolution (no blur, no artifacts)
+- Natural blending between text and background
+- Text should look like it was originally part of Image B
+
+7. Strict rules:
+- DO NOT add any new text
+- DO NOT remove any text
+- DO NOT translate text
+- DO NOT add watermark
+- DO NOT distort the image
+
+Output:
+Return ONLY the final YouTube thumbnail image.
+`;
+
+export const createPromptCreateJapaneseThumbnail = (title, summary) =>
+  `
+Tạo thumbnail YouTube mới kích thước 1280x720 hoặc 1920x1080, phong cách Nhật Bản hiện đại, cực kỳ hấp dẫn, high contrast, vibrant colors, cinematic lighting, sharp details, professional YouTube thumbnail 2026.
+
+Từ hình ảnh tham chiếu được cung cấp:
+- Làm sạch hoàn toàn hình ảnh: loại bỏ mọi chữ cũ, logo cũ và các yếu tố thừa không mong muốn.
+- Tái tạo lại chủ thể chính với chất lượng cao hơn, chi tiết sắc nét và biểu cảm mạnh mẽ hơn để tăng sức hút.
+- Thay nền hoàn toàn bằng nền mới đẹp mắt, phù hợp phong cách Nhật Bản (neon đêm Tokyo, gradient cinematic, anime aesthetic tinh tế hoặc nền tối để text pop).
+
+Thêm text overlay mới, rõ ràng, nổi bật và tối ưu CTR cao:
+- Tiêu đề chính (chữ to, bold): ${title}
+- Hook phụ (chữ nhỏ hơn nhưng mạnh): ${summary}
+
+Yêu cầu text (rất quan trọng):
+- Sử dụng màu text chủ đạo: trắng sáng + viền đen dày, vàng gold neon hoặc đỏ rực
+- Kết hợp linh hoạt: tiêu đề chính dùng **trắng hoặc vàng gold**, hook phụ dùng **đỏ hoặc vàng** để tạo điểm nhấn
+- Font sans-serif hiện đại hoặc kiểu chữ Nhật Bản tinh tế, chữ to rõ ràng, có glow nhẹ hoặc shadow mạnh để text nổi bật cực kỳ
+- Bố cục cân đối, dễ đọc trên mobile, không lộn xộn
+
+Tổng thể: Eye-catching, scroll-stopping, màu sắc rực rỡ, contrast mạnh, chất lượng ultra sharp, 8K, không có logo, không watermark, không text thừa ngoài những gì đã chỉ định.
+
+Reference image: [attach]
+`;
+
+export const createPromptReCreateThumbnailFromSummary = summary => `
+あなたはYouTubeのCTRを最大化するプロのサムネデザイナーです。
+
+添付されたサムネ画像をベースにして、
+構図・人物・背景はできるだけ維持したまま、
+クリック率が最大化されるようにサムネを再生成してください。
+
+【やること】
+・画像内の既存テキストを読み取り、削除または置き換える
+・新しいテキストを追加（より強いCTRを狙う）
+・フォントは太く・視認性を最優先（スマホで一瞬で読める）
+・色・コントラストを強調して目立たせる
+
+【テキスト条件】
+・日本語
+・10〜15文字以内
+・2chまとめ風
+・感情を強く刺激（驚き・恐怖・怒り・共感）
+・内容を全て説明しない（続きを見たくなる）
+
+【デザイン条件】
+・テキストは大きく中央 or 視線誘導に沿って配置
+・背景と被らないように縁取り or シャドウをつける
+・赤・黄・白などコントラストの強い色を使用
+
+【NG】
+・元画像と全く別の構図にする
+・文字が小さい
+・普通すぎる表現
+
+---
+
+【タイトル】
+{{title}}
+
+【動画の要約】
+{{summary}}
+
+【出力】
+・改善後のサムネ画像
+・使用したテキスト
+・なぜCTRが上がるかの簡単な説明
+`;
+
+export const createPromptCreate2CHThumbnail = (title, summary) => `
+You are a Japanese YouTube thumbnail designer specialized in dramatic storytelling (2ch-style inspired, but policy-safe).
+
+Your task is to create a highly clickable thumbnail image.
+
+INPUT:
+Title: ${title}
+Summary: ${summary}
+
+GOAL:
+Create a dramatic, emotional, high-CTR thumbnail while keeping content safe and non-violent.
+
+---
+
+STEP 1: Extract
+- Main situation (family conflict, relationship tension, misunderstanding)
+- Characters (wife, husband, mother-in-law, etc.)
+- Emotion (shock, anger, disappointment, tension)
+
+---
+
+STEP 2: Visual Direction
+- Use 2–3 characters max
+- Show strong emotions but NON-VIOLENT:
+  - shocked face (wide eyes, open mouth)
+  - angry face (frowning, tense expression)
+  - crying (tears, sadness)
+  - smug (slight smirk, not evil exaggerated)
+- NO physical violence (no hitting, slapping, harming)
+
+---
+
+STEP 3: Composition
+- Split layout (left vs right conflict)
+- Clear focus on faces
+- Close-up framing (important for mobile CTR)
+
+---
+
+STEP 4: Japanese Text (IMPORTANT)
+- Add short emotional phrases (3–6 words)
+- Avoid offensive/extreme wording
+- Examples:
+  「信じられない」
+  「何これ…」
+  「まさかの展開」
+  「ありえない…」
+
+- Style:
+  - bold font
+  - white / yellow text
+  - black outline
+
+---
+
+STEP 5: Style & Effects
+- High contrast lighting
+- Manga-style speed lines (subtle)
+- Clean background (no chaos)
+- Emphasis on expressions
+
+---
+
+STEP 6: Output
+Return a single detailed IMAGE PROMPT in English including:
+- characters (appearance, emotion)
+- layout
+- lighting
+- Japanese text in quotes
+- style keywords: "Japanese YouTube thumbnail, dramatic, emotional, manga style, high contrast, clean, viral"
+
+---
+
+IMPORTANT RULES:
+- No violence
+- No hateful or abusive wording
+- Focus on emotional tension, not harm
+- Keep it simple and clear
+- Optimize for mobile viewing
+
+OUTPUT:
+Only return the final image prompt.
+`;
+
+export const createThumbnailFromImage = (title, summary) => `
+添付した古いサムネイル画像をベースに、提供された以下の「動画タイトル」と「内容要約」をAIが分析し、最も高クリック率（CTR）が期待できるYouTubeサムネイルを生成してください。
+
+【入力情報】
+動画タイトル: ${title}
+動画の内容要約: ${summary}
+
+【AIへの生成指示 - 自動分析とテキスト考案】
+
+分析: AIは提供された「動画タイトル」と「内容要約」を読み、ストーリーの核心、感情的なピーク、衝撃的な事実を特定してください。
+
+テキスト考案 (自動): 分析結果に基づき、視聴者の好奇心を極限まで刺激する「メインテキスト（巨大）」と、それを補足する「サブテキスト（中）」をAI独自に考案してください。
+
+テキスト配置: 考案したテキストを画像内に大きく、太いフォントで配置してください。色は赤、黄色、白などの高コントラストなものにし、黒い縁取りを付けること。
+
+【デザインの指示 - 2chスタイル】
+
+キャラクター: 古い画像のキャラクター（2chのアスキーアート風スタイル）を維持しつつ、表情をより強調（絶望、衝撃、狂気的な笑いなど）してください。状況に合わせて服装や小物を少し追加しても構いません。
+
+背景と配色: 2ch解説動画特有の、少しダークで緊張感のある背景にしてください。ネオン効果や集中線を追加して、視線を中央に集めること。
+
+ポリシー遵守: 過度な暴力描写や公序良俗に反する表現は避け、ストーリーの劇的な展開を象徴する表現に留めてください。
+
+2chの独特な雰囲気を守りつつ、視聴者が思わずクリックしたくなるような「引き」の強いデザインをお願いします。
+`;

@@ -570,7 +570,24 @@ async function processOne(bgNameArg, options = {}) {
 
   const videoToScale = `[0:v]null[vpadded]`;
   const videoEncodeArgs = HAS_NVENC
-    ? ['-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1', '-c:a', 'aac', '-b:a', '128k']
+    ? [
+        '-c:v',
+        'h264_nvenc',
+        '-preset',
+        'p1',
+        '-rc',
+        'vbr',
+        '-cq',
+        '28',
+        '-pix_fmt',
+        'yuv420p',
+        '-tag:v',
+        'avc1',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+      ]
     : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'ultrafast', '-tag:v', 'avc1', '-c:a', 'aac', '-b:a', '128k'];
   const logoPathForMerge = options.logoPath != null ? options.logoPath : LOGO_PATH;
   // const hasLogo = fs.existsSync(logoPathForMerge);
@@ -598,11 +615,16 @@ async function processOne(bgNameArg, options = {}) {
     const mergeArgs = ['-y', '-i', tempVideoPath, '-i', workingAudioPath];
     if (hasLogo) mergeArgs.push('-i', logoPathForMerge);
     mergeArgs.push(
-      '-filter_complex', filterComplexFinal,
-      '-map', '[vout]', '-map', '1:a',
+      '-filter_complex',
+      filterComplexFinal,
+      '-map',
+      '[vout]',
+      '-map',
+      '1:a',
       ...videoEncodeArgs,
-      '-t', String(audioDurationAfterTempo),
-      outputPath,
+      '-t',
+      String(audioDurationAfterTempo),
+      outputPath
     );
 
     console.log(`Đang merge video + audio + subtitle ASS (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));
@@ -613,18 +635,21 @@ async function processOne(bgNameArg, options = {}) {
     fs.unlinkSync(tempSubPath);
     if (scaledSrtPath && fs.existsSync(scaledSrtPath)) fs.unlinkSync(scaledSrtPath);
   } else {
-    const filterComplexFinal = hasLogo
-      ? `${videoToScale};${buildLogoOverlay('vpadded')}`
-      : `${videoToScale};[vpadded]copy[vout]`;
+    const filterComplexFinal = hasLogo ? `${videoToScale};${buildLogoOverlay('vpadded')}` : `${videoToScale};[vpadded]copy[vout]`;
 
     const mergeArgs = ['-y', '-i', tempVideoPath, '-i', workingAudioPath];
     if (hasLogo) mergeArgs.push('-i', logoPathForMerge);
     mergeArgs.push(
-      '-filter_complex', filterComplexFinal,
-      '-map', '[vout]', '-map', '1:a',
+      '-filter_complex',
+      filterComplexFinal,
+      '-map',
+      '[vout]',
+      '-map',
+      '1:a',
       ...videoEncodeArgs,
-      '-t', String(audioDurationAfterTempo),
-      outputPath,
+      '-t',
+      String(audioDurationAfterTempo),
+      outputPath
     );
 
     console.log(`Đang merge video + audio (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));

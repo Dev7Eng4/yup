@@ -139,7 +139,11 @@ async function downloadThumbnail(url, options = {}) {
 /**
  * Pipeline VTT: cleanSrt → SRT → Gemini → ghi SRT + callback title/description/tags (không ghi file meta).
  */
-async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
+async function processVttTranscriptsWithGemini(
+  url,
+  outputDir,
+  { updateTranscript = true, videoTitle, description, tags, callback, language }
+) {
   const { cleanSrt } = await import('./cleanSrt.js');
   const { updateContentWithGemini } = await import('./updateContentWithGemini2CH.js');
 
@@ -162,6 +166,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
         title: videoTitle,
         description,
         tags,
+        language,
       });
       finalSrt = geminiOut.srt;
       if ('title' in geminiOut && typeof callback === 'function') {
@@ -275,6 +280,7 @@ async function downloadTranscript(url, options = {}) {
         description,
         tags,
         callback,
+        language: transcriptLang,
       });
     }
   }

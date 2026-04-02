@@ -5,12 +5,26 @@
 
 import { openChromeProfile } from './makeChromeProfile.js';
 import { checkContentSrt, createPromptUpdateShortTranscript } from './promts/updateContent.js';
-import { createPromptSummaryContent, createPromptToMergeSummaryContent, createPromptCreateMetaInfo } from './promts/createVideoInfo.js';
 import { extractGeminiResponse, waitForGeminiResponse } from './utils/gemini.util.js';
 import { clickElement } from './utils/dom.util.js';
-import { GEMINI_CHUNK_SIZE, META_DATA } from './constants/index.js';
+import { GEMINI_CHUNK_SIZE, GEMINI_CONFIG, META_DATA } from './constants/index.js';
+import { srtToPlainText } from './utils/srt.util.js';
 
-const GEMINI_URL = 'https://gemini.google.com/app';
+const DEFAULT_PROMPT_LANG = 'ja';
+
+/**
+ * Dynamic import prompts theo ngôn ngữ.
+ * Thử load từ ./promts/<lang>/createVideoInfo.js, nếu không có thì fallback về ./promts/createVideoInfo.js (ja).
+ */
+async function loadVideoInfoPrompts(language) {
+  const lang = String(language || DEFAULT_PROMPT_LANG).toLowerCase();
+  try {
+    return await import(`./promts/${lang}/createVideoInfo.js`);
+  } catch {
+    return await import('./promts/createVideoInfo.js');
+  }
+}
+
 const MAX_CONCURRENT = 2; // số lượng tối đa 5 browser (tab) đồng thời
 
 /**
@@ -89,7 +103,7 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
   console.log(`\n--- Đang mở Gemini và gửi prompt phần ${index + 1}/${totalChunks} ---`);
 
   // Mở trang Gemini thẳng luôn trên tab được giao
-  await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.goto(GEMINI_CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
   const result = await sendPromptToPage(page, prompt, `phần ${index + 1}/${totalChunks}`);
 
@@ -98,38 +112,48 @@ async function processChunkOnPage(page, chunk, index, totalChunks) {
 
 /**
  * Parse phản hồi đúng theo # Output Format trong createPromptCreateMetaInfo:
- * Niche → Title → Description → Tags (mỗi nhãn một dòng, nội dung phía dưới).
+ * Niche → Title → Description → Tags (mỗi nhãn nằm trên 1 dòng riêng, nội dung phía dưới).
+ * Tìm vị trí từng label rồi cắt text giữa chúng — tránh regex lazy + multiline flag gây cắt sai.
  */
 function parseCreateMetaInfoResponse(metaRaw) {
   let text = String(metaRaw || '').trim();
-  text = text.replace(/^```[^\n]*\n?/i, '').replace(/\n?```\s*$/i, '').trim();
+  text = text
+    .replace(/^```[^\n]*\n?/i, '')
+    .replace(/\n?```\s*$/i, '')
+    .trim();
 
   const L = META_DATA;
-  const nicheMatch = text.match(
-    new RegExp(`^${L.NICHE}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.TITLE}\\s*\\n|$)`, 'im'),
-  );
-  const titleMatch = text.match(
-    new RegExp(`^${L.TITLE}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.DESCRIPTION}\\s*\\n|$)`, 'im'),
-  );
-  const descMatch = text.match(
-    new RegExp(`^${L.DESCRIPTION}\\s*\\n([\\s\\S]*?)(?=\\n\\s*\\n?${L.TAGS}\\s*\\n|$)`, 'im'),
-  );
-  const tagsMatch = text.match(new RegExp(`^${L.TAGS}\\s*\\n([\\s\\S]*)$`, 'im'));
+  const labels = [
+    { key: 'niche', label: L.NICHE },
+    { key: 'title', label: L.TITLE },
+    { key: 'description', label: L.DESCRIPTION },
+    { key: 'tags', label: L.TAGS },
+  ];
 
-  return {
-    niche: nicheMatch ? nicheMatch[1].trim() : '',
-    title: titleMatch ? titleMatch[1].trim() : '',
-    description: descMatch ? descMatch[1].trim() : '',
-    tags: tagsMatch ? tagsMatch[1].trim() : '',
-  };
+  const positions = [];
+  for (const { key, label } of labels) {
+    const re = new RegExp(`^${label}\\s*$`, 'im');
+    const m = re.exec(text);
+    if (m) positions.push({ key, start: m.index, contentStart: m.index + m[0].length });
+  }
+  positions.sort((a, b) => a.start - b.start);
+
+  const result = { niche: '', title: '', description: '', tags: '' };
+  for (let i = 0; i < positions.length; i++) {
+    const end = i < positions.length - 1 ? positions[i + 1].start : text.length;
+    result[positions[i].key] = text.slice(positions[i].contentStart, end).trim();
+  }
+  return result;
 }
 
 /**
  * Trên cùng một tab Gemini: tóm tắt SRT theo chunk (500 cues) → metadata tổng hợp (createVideoInfo.js).
  * Giống luồng updateContentWithGemini2CH.js, prompt từ createPromptSummaryContent / createPromptCreateMetaInfo.
  */
-async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
-  console.log('\n--- Gemini: tóm tắt cuốn chiếu (500 cues/lần) → metadata tổng hợp (createVideoInfo) ---');
+async function runGeminiVideoMetaPrompts(page, { title, srtContent, language }) {
+  const prompts = await loadVideoInfoPrompts(language);
+  const lang = String(language || DEFAULT_PROMPT_LANG).toUpperCase();
+  console.log(`\n--- Gemini [${lang}]: tóm tắt cuốn chiếu (500 cues/lần) → metadata tổng hợp ---`);
   await page.waitForTimeout(1500);
 
   const cues = srtContent
@@ -138,7 +162,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
     .filter(Boolean);
 
   const summaries = [];
-  let lastSummary = '「物語の始まり」';
+  let lastSummary = '';
   const totalChunks = Math.ceil(cues.length / GEMINI_CHUNK_SIZE.SUMMARY_CONTENT) || 1;
 
   for (let i = 0; i < cues.length; i += GEMINI_CHUNK_SIZE.SUMMARY_CONTENT) {
@@ -147,7 +171,9 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
 
     console.log(`Đang tóm tắt phần ${chunkIndex}/${totalChunks}...`);
 
-    const prompt = createPromptSummaryContent(chunk, lastSummary);
+    const plainChunk = srtToPlainText(chunk);
+    console.log('🚀 ~ runGeminiVideoMetaPrompts ~ plainChunk:', plainChunk);
+    const prompt = prompts.createPromptSummaryContent(plainChunk, lastSummary);
     const result = await sendPromptToPage(page, prompt, `tóm tắt phần ${chunkIndex}/${totalChunks}`);
 
     const cleanResult = result.trim();
@@ -163,7 +189,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
 
   if (summaries.length >= 2) {
     console.log(`\nCó ${summaries.length} bản tóm tắt, đang gửi prompt merge các bản tóm tắt...`);
-    const mergePrompt = createPromptToMergeSummaryContent(finalSummaryForMeta);
+    const mergePrompt = prompts.createPromptToMergeSummaryContent(finalSummaryForMeta);
     finalSummaryForMeta = await sendPromptToPage(page, mergePrompt, 'merge summaries');
     await page.waitForTimeout(1500);
   }
@@ -172,8 +198,8 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
 
   const metaRaw = await sendPromptToPage(
     page,
-    createPromptCreateMetaInfo(title, finalSummaryForMeta),
-    'metadata video (niche, title, desc, tags)',
+    prompts.createPromptCreateMetaInfo(title, finalSummaryForMeta),
+    'metadata video (niche, title, desc, tags)'
   );
 
   const parsed = parseCreateMetaInfoResponse(metaRaw);
@@ -191,10 +217,10 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent }) {
  * INTERNAL: Xử lý Meta (Title, Description, Tags) trên 1 page có sẵn
  */
 async function internalUpdateVideoMeta(page, options = {}) {
-  const { title = '', srtContent = '' } = options;
+  const { title = '', srtContent = '', language } = options;
 
-  await page.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent });
+  await page.goto(GEMINI_CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  const meta = await runGeminiVideoMetaPrompts(page, { title, srtContent, language });
   return meta;
 }
 
@@ -226,7 +252,7 @@ async function internalUpdateTranscript(context, initialPage, rawSrtContent, opt
 
   if (durationMin < 30) {
     console.log(`Video < 30 phút, Xử lý TUẦN TỰ trên 1 tab...`);
-    await initialPage.goto(GEMINI_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await initialPage.goto(GEMINI_CONFIG.URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     for (let i = 0; i < totalChunks; i++) {
       const chunk = chunks[i];

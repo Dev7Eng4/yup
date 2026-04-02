@@ -106,6 +106,7 @@ async function main() {
   const meta = await updateVideoMetaWithGemini({
     title: info.title,
     srtContent,
+    language: 'ko',
   });
 
   const out = {
