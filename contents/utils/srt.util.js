@@ -81,18 +81,8 @@ function cleanSrt(vttPath) {
     cleaned[cleaned.length - 1].rawEnd = rawEnd;
   }
 
-  console.log('🚀 ~ cleanSrt ~ cleaned:', cleaned);
-  // Tạo nội dung SRT hợp lệ với logic:
-  // item[0].start = item[0].rawStart
-  // item[i].start = prev.rawEnd (end của item trước)
-  // item[i].end = item[i].rawEnd
   const srt = cleaned
     .map((b, i, arr) => {
-      // start: nếu i === 0 thì lấy rawStart, else lấy rawEnd của phần tử trước
-      // const startRaw = i === 0 ? b.rawStart : arr[i - 1].rawEnd;
-      // const endRaw = b.rawEnd;
-
-      // Normalize: đổi dấu chấm thành dấu phẩy cho phần giây.milliseconds
       const normalize = t => t.replace(/\./g, ',');
 
       const start = normalize(b.rawStart);
@@ -105,6 +95,33 @@ function cleanSrt(vttPath) {
   const srtPath = vttPath.replace(/\.vtt$/i, '.srt');
   fs.writeFileSync(srtPath, srt, 'utf-8');
   console.log('✅ Clean subtitle xong:', srtPath);
+}
+
+/**
+ * Trích xuất phần text thuần từ nội dung SRT (bỏ số thứ tự cue và timeline).
+ * Input: chuỗi SRT (có thể là 1 chunk nhiều block cách nhau bằng dòng trống).
+ * Output: chuỗi chỉ chứa các dòng thoại, mỗi block cách nhau 1 dòng trống.
+ */
+export function srtToPlainText(srtContent) {
+  if (!srtContent) return '';
+  const timelineRe = /^\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[.,]\d{3}/;
+
+  return srtContent
+    .split(/\n\n+/)
+    .map(block => {
+      const lines = block
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean);
+      const textLines = lines.filter(line => {
+        if (/^\d+$/.test(line)) return false;
+        if (timelineRe.test(line)) return false;
+        return true;
+      });
+      return textLines.join('\n');
+    })
+    .filter(Boolean)
+    .join('\n\n');
 }
 
 /**

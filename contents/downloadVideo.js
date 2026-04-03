@@ -9,7 +9,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { detectVideoLang, getLanguageOptions } from './utils/detectLanguage.util.js';
 
-import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { MAKE_VIDEO_MODE, LANGUAGES_NEED_UPDATE_TRANSCRIPT } from './constants/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, '..', 'downloads');
@@ -139,8 +139,12 @@ async function downloadThumbnail(url, options = {}) {
 /**
  * Pipeline VTT: cleanSrt → SRT → Gemini → ghi SRT + callback title/description/tags (không ghi file meta).
  */
-async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscript = true, videoTitle, description, tags, callback }) {
-  const { cleanSrt } = await import('./cleanSrt.js');
+async function processVttTranscriptsWithGemini(
+  url,
+  outputDir,
+  { updateTranscript = true, videoTitle, description, tags, callback, language },
+) {
+  const { cleanSrt } = await import('./utils/srt.util.js');
   const { updateContentWithGemini } = await import('./updateContentWithGemini2CH.js');
 
   const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
@@ -162,6 +166,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
         title: videoTitle,
         description,
         tags,
+        language,
       });
       finalSrt = geminiOut.srt;
       if ('title' in geminiOut && typeof callback === 'function') {
@@ -173,7 +178,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
               description: geminiOut.description ?? '',
               tags: geminiOut.tags ?? '',
               summary: geminiOut.summary ?? '',
-            })
+            }),
           );
           console.log('✅ Đã gửi title/description/tags/summary (Gemini) qua callback.');
         } catch (cbErr) {
@@ -197,6 +202,7 @@ async function processVttTranscriptsWithGemini(url, outputDir, { updateTranscrip
  * @param {string[]} [options.tags] - Tags gốc từ YouTube
  * @param {(p: { url: string, title: string, description: string, tags: string }) => void | Promise<void>} [options.callback] - Sau khi Gemini trả title/description/tags (video ngắn)
  * @param {boolean} [options.vttOnlyClean] - Khi `subFormat: 'vtt'`: chỉ cleanSrt → SRT và xóa VTT, không gọi Gemini (dùng cho script meta-only).
+ * Chỉnh từng dòng SRT qua Gemini khi `updateTranscript` và ngôn ngữ phụ đề đã tải ∈ `LANGUAGES_NEED_UPDATE_TRANSCRIPT` (constants); ngược lại vẫn có thể chạy bước metadata Gemini.
  */
 async function downloadTranscript(url, options = {}) {
   const {
@@ -216,6 +222,8 @@ async function downloadTranscript(url, options = {}) {
   const detectedLang = detectVideoLang(videoTitle);
   const langOrder = [detectedLang, ...getLanguageOptions()].filter((l, i, a) => a.indexOf(l) === i);
   let lastErr = null;
+  /** Ngôn ngữ phụ đề đã tải được (mã ISO, vd: ja, ko) */
+  let transcriptLang = null;
 
   for (const lang of langOrder) {
     try {
@@ -233,6 +241,7 @@ async function downloadTranscript(url, options = {}) {
         addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
       });
       lastErr = null;
+      transcriptLang = lang;
       break;
     } catch (err) {
       lastErr = err;
@@ -242,9 +251,22 @@ async function downloadTranscript(url, options = {}) {
 
   if (lastErr) throw lastErr;
 
+  const needsGeminiTranscriptUpdate =
+    updateTranscript &&
+    transcriptLang != null &&
+    LANGUAGES_NEED_UPDATE_TRANSCRIPT.some(l => String(l).toLowerCase() === String(transcriptLang).toLowerCase());
+
+  if (updateTranscript && transcriptLang != null && !needsGeminiTranscriptUpdate) {
+    console.log(
+      `Phụ đề ${String(transcriptLang).toUpperCase()}: bỏ chỉnh từng dòng qua Gemini (chỉ áp dụng: ${LANGUAGES_NEED_UPDATE_TRANSCRIPT.join(
+        ', ',
+      )}). Vẫn chạy metadata/title nếu có.`,
+    );
+  }
+
   if (targetFormat === 'vtt') {
     if (vttOnlyClean) {
-      const { cleanSrt } = await import('./cleanSrt.js');
+      const { cleanSrt } = await import('./utils/srt.util.js');
       const vttFiles = fs.readdirSync(outputDir).filter(f => f.endsWith('.vtt'));
       for (const file of vttFiles) {
         const vttPath = path.join(outputDir, file);
@@ -252,7 +274,14 @@ async function downloadTranscript(url, options = {}) {
         fs.unlinkSync(vttPath);
       }
     } else {
-      await processVttTranscriptsWithGemini(url, outputDir, { updateTranscript, videoTitle, description, tags, callback });
+      await processVttTranscriptsWithGemini(url, outputDir, {
+        updateTranscript: needsGeminiTranscriptUpdate,
+        videoTitle,
+        description,
+        tags,
+        callback,
+        language: transcriptLang,
+      });
     }
   }
 
@@ -407,9 +436,9 @@ async function main() {
     fs.writeFileSync(OUTPUT_FILE, output, 'utf-8');
     console.log('Đã lưu thông tin vào downloads/output.json');
 
+    await downloadThumbnail(url);
     await downloadVideo(url);
     await downloadAudio(url);
-    await downloadThumbnail(url);
 
     let mergedResult = { ...result };
     try {

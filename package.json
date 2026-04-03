@@ -9,25 +9,24 @@
     "lay-thong-tin-youtube (video, channel)": "node -e \"import('./contents/getInfoChannel.js').then(m=>m.default())\"",
     "tao-batch-video-tu-audio": "node -e \"import('./contents/scripts/createBatchVideo.js').then(m => m.default({ videoType: 'from_audio' }))\"",
     "tao-batch-video-reup-full": "node -e \"import('./contents/scripts/createBatchVideo.js').then(m => m.default({ videoType: 'reup_full' }))\"",
-    "dong-bo-trang-thai": "node contents/scripts/syncStatusToExcel.js",
     "lam-lai-video": "node contents/makeVideoFromFull.js",
     "tao-thumbnail-flow": "node contents/scripts/createThumbnailFlow.js",
     "tom-tat-meta-tu-transcript": "node contents/scripts/summaryMetaFromTranscript.js"
   },
   "dependencies": {
-    "@prevter/tiktok-scraper": "^1.0.1",
-    "axios": "^1.13.6",
-    "debug": "^4.3.4",
-    "exceljs": "^4.4.0",
-    "glob": "^13.0.6",
-    "inquirer": "^9.2.23",
-    "playwright": "^1.58.2",
-    "puppeteer": "^24.40.0",
-    "sharp": "^0.33.5",
-    "xlsx": "^0.18.5",
-    "youtube-dl-exec": "^3.1.3"
+    "@prevter/tiktok-scraper": "1.0.1",
+    "axios": "1.13.6",
+    "debug": "4.3.4",
+    "exceljs": "4.4.0",
+    "glob": "13.0.6",
+    "inquirer": "9.2.23",
+    "playwright": "1.58.2",
+    "puppeteer": "24.40.0",
+    "sharp": "0.33.5",
+    "xlsx": "0.18.5",
+    "youtube-dl-exec": "3.1.3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2"
+    "@playwright/test": "1.58.2"
   }
 }

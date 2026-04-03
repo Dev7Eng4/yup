@@ -1,6 +1,6 @@
 /**
  * Đọc URL đầu tiên từ input.txt → getVideoInfo → tải transcript (SRT) → Gemini:
- * tóm tắt nội dung (summary) + title, description, tags.
+ * tóm tắt nội dung (summary) + niche, title, description, tags.
  *
  * Không chỉnh từng dòng phụ đề (khác pipeline VTT + update transcript).
  * Tải VTT rồi `cleanSrt` → SRT (qua `downloadTranscript` + `vttOnlyClean`, không Gemini).
@@ -102,10 +102,11 @@ async function main() {
   const srtContent = fs.readFileSync(srtPath, 'utf-8');
   console.log(`Đã đọc: ${path.basename(srtPath)} (${srtContent.length} ký tự)`);
 
-  console.log('Đang mở Gemini: tóm tắt → title, description, tags...');
+  console.log('Đang mở Gemini: tóm tắt → niche, title, description, tags...');
   const meta = await updateVideoMetaWithGemini({
     title: info.title,
     srtContent,
+    language: 'ko',
   });
 
   const out = {
@@ -116,6 +117,7 @@ async function main() {
       tags: info.tags,
     },
     gemini: {
+      niche: meta.niche ?? '',
       title: meta.title,
       description: meta.description,
       tags: meta.tags,

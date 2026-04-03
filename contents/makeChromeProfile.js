@@ -1,11 +1,12 @@
 /**
  * Tạo / load Chrome profile persistent.
- * Lần đầu: mở Chrome để user đăng nhập Google → session lưu vào chrome-profile/profile1.
+ * Mỗi profile lưu trong chrome-profile/profile1, chrome-profile/profile2, ...
+ * Lần đầu: chạy `node contents/makeChromeProfile.js [số]` để đăng nhập Google.
  * Các lần sau: load lại profile đã lưu, không cần đăng nhập lại.
  *
  * Cách dùng:
  *   import { openChromeProfile } from './makeChromeProfile.js';
- *   const { context, page } = await openChromeProfile();
+ *   const { context, page } = await openChromeProfile({ profile: 1 });
  *   // ... dùng page ...
  *   await context.close();
  */
@@ -17,57 +18,46 @@ import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const PROFILE_DIR = path.join(ROOT, 'chrome-profile');
+const PROFILES_ROOT = path.join(ROOT, 'chrome-profile');
+
+function getProfileDir(profileNum) {
+  return path.join(PROFILES_ROOT, `profile${profileNum}`);
+}
 
 /**
  * Mở Chrome với persistent context (profile lưu trên ổ đĩa).
  * @param {object} [options]
+ * @param {number}  [options.profile=1] - Số profile (1, 2, 3, ...)
  * @param {boolean} [options.headless=false] - Chạy ẩn browser
  * @param {string}  [options.windowPosition='-2000,-2000'] - Vị trí cửa sổ (mặc định ngoài màn hình)
  * @param {boolean} [options.visible=true] - true = hiển thị bình thường, false = ẩn ngoài màn hình
  * @returns {Promise<{context: import('playwright').BrowserContext, page: import('playwright').Page}>}
  */
 export async function openChromeProfile(options = {}) {
-  const { headless = false, windowPosition, visible = true } = options;
+  const { profile = 1, headless = false, windowPosition, visible = true } = options;
 
-  // const args = ['--no-sandbox', '--disable-blink-features=AutomationControlled', '--window-size=880,900'];
+  const profileDir = getProfileDir(profile);
+  if (!fs.existsSync(profileDir)) {
+    fs.mkdirSync(profileDir, { recursive: true });
+  }
+
   const args = ['--no-sandbox', '--disable-blink-features=AutomationControlled'];
 
-  // Nếu không visible → đẩy cửa sổ ra ngoài màn hình
   if (!visible) {
     args.push('--start-minimized');
     args.push(`--window-position=${windowPosition || '-2000,-2000'}`);
   }
 
-  let activeProfileDir = PROFILE_DIR;
+  console.log(`Đang mở Chrome với profile${profile} (${profileDir})`);
 
-  // Nếu không phải là phiên đăng nhập gốc, ta nhân bản profile sạch ra một thư mục tạm
-  // Việc này giúp PROFILE_DIR (ảnh gốc) không bao giờ bị Playwright ghi thêm rác/cache làm phình to
-  if (!options.isLoginRun) {
-    const TEMP_PROFILE_DIR = path.join(ROOT, 'temp-chrome-profile');
-    console.log('Copying pristine chrome-profile to temporary environment to prevent cache bloat...');
-    if (fs.existsSync(TEMP_PROFILE_DIR)) {
-      fs.rmSync(TEMP_PROFILE_DIR, { recursive: true, force: true });
-    }
-    if (fs.existsSync(PROFILE_DIR)) {
-      try {
-        fs.cpSync(PROFILE_DIR, TEMP_PROFILE_DIR, { recursive: true });
-      } catch (err) {
-        console.warn('Cảnh báo không thể copy toàn bộ chrome-profile (có thể có file đang bị lock):', err.message);
-      }
-    }
-    activeProfileDir = TEMP_PROFILE_DIR;
-  }
-
-  const context = await chromium.launchPersistentContext(activeProfileDir, {
-    channel: 'chrome', // Dùng Chrome thật (đã cài trên máy)
+  const context = await chromium.launchPersistentContext(profileDir, {
+    channel: 'chrome',
     headless,
     args,
-    viewport: null, // Để Chrome tự căn chỉnh kích thước
-    ignoreDefaultArgs: ['--enable-automation'], // Bỏ flag automation
+    viewport: null,
+    ignoreDefaultArgs: ['--enable-automation'],
   });
 
-  // Lấy page có sẵn hoặc tạo mới
   const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
 
   return { context, page };
@@ -77,15 +67,18 @@ export async function openChromeProfile(options = {}) {
  * Chạy trực tiếp file này để tạo profile + đăng nhập Google lần đầu.
  * Sau khi đăng nhập xong → đóng browser → session đã được lưu.
  *
- *   node contents/makeChromeProfile.js
+ *   node contents/makeChromeProfile.js        → setup profile1
+ *   node contents/makeChromeProfile.js 2      → setup profile2
  */
 async function main() {
-  console.log('Đang mở Chrome để tạo profile...');
-  console.log(`Profile sẽ lưu tại: ${PROFILE_DIR}`);
+  const profileNum = parseInt(process.argv[2], 10) || 1;
+  const profileDir = getProfileDir(profileNum);
 
-  const { context, page } = await openChromeProfile({ visible: true, isLoginRun: true });
+  console.log(`Đang mở Chrome để tạo profile${profileNum}...`);
+  console.log(`Profile sẽ lưu tại: ${profileDir}`);
 
-  // Mở trang đăng nhập Google
+  const { context, page } = await openChromeProfile({ profile: profileNum, visible: true });
+
   await page.goto('https://accounts.google.com', { waitUntil: 'domcontentloaded' });
 
   console.log('\n====================================');
@@ -93,36 +86,21 @@ async function main() {
   console.log('Sau khi đăng nhập xong, nhấn Enter ở đây để đóng browser.');
   console.log('====================================\n');
 
-  // Đợi user nhấn Enter
   await new Promise(resolve => {
     process.stdin.resume();
     process.stdin.once('data', () => resolve());
   });
 
   await context.close();
-  console.log('Đã lưu profile. Các lần sau sẽ tự động dùng session này.');
+  console.log(`Đã lưu profile${profileNum}. Các lần sau sẽ tự động dùng session này.`);
 }
 
-// Nếu chạy trực tiếp file này
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isMain) {
   main().catch(err => {
     console.error(err);
     process.exit(1);
   });
-}
-
-export function cleanupTempProfile() {
-  const TEMP_PROFILE_DIR = path.join(ROOT, 'temp-chrome-profile');
-  if (fs.existsSync(TEMP_PROFILE_DIR)) {
-    try {
-      // Dùng maxRetries để tránh lỗi file đang bị lock trên Windows
-      fs.rmSync(TEMP_PROFILE_DIR, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 });
-      console.log('Đã xoá dọn dẹp thư mục temp-chrome-profile.');
-    } catch (err) {
-      console.warn('Cảnh báo không thể xoá temp-chrome-profile:', err.message);
-    }
-  }
 }
 
 export default openChromeProfile;

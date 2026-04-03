@@ -13,9 +13,54 @@ export const flowSettings = {
   FLOW_PROJECT_ID: '3550d75f-a7ac-41ec-9ec7-0c23bc5efb95',
 };
 
-export const MAX_GEMINI_CONCURRENT = 3; // số lượng tối đa 5 browser (tab) đồng thời
+export const GEMINI_CONFIG = {
+  URL: 'https://gemini.google.com/app',
+  MAX_CONCURRENT: 3, // số lượng tối đa 5 browser (tab) đồng thời
+};
 
 export const GEMINI_CHUNK_SIZE = {
   UPDATE_TRANSCRIPT: 200,
   SUMMARY_CONTENT: 500,
+};
+
+export const LANGUAGES_NEED_UPDATE_TRANSCRIPT = ['ja'];
+
+export const META_DATA = {
+  NICHE: 'Niche',
+  TITLE: 'Title',
+  DESCRIPTION: 'Description',
+  TAGS: 'Tags',
+};
+
+export const DEFAULT_VIDEO = {
+  BACKGROUND_VIDEO: 'cat',
+};
+
+export const AUDIO_SPEED = 0.91;
+
+export const STOCK_VIDEO = {
+  CROSSFADE_SEC: 1,
+  RENDER_EXTRA_SEC: 15,
+  SLOWMO_FACTOR: 2.0,
+  CANVAS_W: 1280,
+  CANVAS_H: 720,
+  FPS: 30,
+  BITRATE: '4M',
+  MAX_BITRATE: '5M',
+  BUFSIZE: '8M',
+};
+
+export const SUBTITLE = {
+  BOX_HEIGHT: 200,
+  BOX_OPACITY: 0.5,
+  FONT_SIZE: 80,
+  PADDING_TOP: 15,
+  PADDING_HORIZONTAL: 40,
+  CHAR_SPACING: 2,
+};
+
+export const LOGO = {
+  SIZE: 80,
+  MARGIN_TOP: 20,
+  MARGIN_RIGHT: 20,
 };

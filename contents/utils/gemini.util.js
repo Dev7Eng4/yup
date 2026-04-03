@@ -1,5 +1,5 @@
 export async function waitForGeminiResponse(page, timeoutMs = 120000) {
-  await page.waitForSelector('.model-response-text, .response-content, message-content', {
+  await page.waitForSelector('.model-response-text, .response-content, .message-content', {
     timeout: timeoutMs,
   });
 
@@ -26,7 +26,7 @@ export async function extractGeminiResponse(page) {
 
   return page.evaluate(() => {
     const responses = Array.from(
-      document.querySelectorAll('.model-response-text, .response-content, message-content, div[data-message-author-role="model"]')
+      document.querySelectorAll('.model-response-text, .response-content, .message-content, div[data-message-author-role="model"]'),
     );
 
     if (responses.length === 0) return '';

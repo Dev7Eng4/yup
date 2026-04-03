@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { GPU_INFO } from './utils/hardware.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -11,11 +12,33 @@ const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OVERLAY_DIR = path.join(ROOT, 'backgrounds', 'overlay');
 const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 
-// ok -> 0.4 + 0.5
-/** Lớp ảnh (dưới) — giữ như phiên bản cũ */
 const IMAGE_OVERLAY_OPACITY = 0.5;
-/** Lớp video (trên cùng) */
 const VIDEO_OVERLAY_OPACITY = 0.5;
+
+/**
+ * Zoom trung tâm + cắt 4 phía trên video gốc (input 0) trước khi overlay.
+ * 0 = tắt. Ví dụ 10 = phóng to rồi cắt ~10% chiều rộng từ trái và phải (và tương tự trên/dưới), giữ độ phân giải đầu ra = video gốc.
+ * Giới hạn thực tế: 1–49 (từ 50 trở lên không hợp lệ cho công thức scale/crop).
+ */
+const VIDEO_CROP_PERCENT = 0;
+
+/**
+ * Lấy resolution (width × height) của video bằng ffprobe.
+ * Dùng để scale overlay chính xác thay vì scale2ref mỗi frame.
+ */
+function getVideoResolution(filePath) {
+  try {
+    const cmd = `ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=s=x:p=0 "${filePath}"`;
+    const result = execSync(cmd, { encoding: 'utf-8' }).trim();
+    const [w, h] = result.split('x').map(Number);
+    if (w > 0 && h > 0) return { width: w, height: h };
+  } catch {
+    // fallback
+  }
+  return { width: 1920, height: 1080 };
+}
+
+const OVERLAY_CACHE_DIR = path.join(OVERLAY_DIR, '.cache');
 
 function ensureDirs() {
   if (!fs.existsSync(OUTPUT_DIR)) {
@@ -24,6 +47,38 @@ function ensureDirs() {
   if (!fs.existsSync(OVERLAY_DIR)) {
     fs.mkdirSync(OVERLAY_DIR, { recursive: true });
   }
+  if (!fs.existsSync(OVERLAY_CACHE_DIR)) {
+    fs.mkdirSync(OVERLAY_CACHE_DIR, { recursive: true });
+  }
+}
+
+/**
+ * Pre-process ảnh overlay: scale đúng WxH + nhân sẵn alpha → lưu cache PNG.
+ * Lần sau cùng resolution + opacity + ảnh gốc → dùng lại, không cần tính lại mỗi frame.
+ * Trả về đường dẫn file cache (RGBA PNG, đã baked alpha).
+ */
+function getPreprocessedImageOverlay(imagePath, width, height, opacity) {
+  const srcStat = fs.statSync(imagePath);
+  const cacheKey = `img_${path.parse(imagePath).name}_${width}x${height}_a${Math.round(opacity * 100)}_${srcStat.mtimeMs}`;
+  const cachePath = path.join(OVERLAY_CACHE_DIR, `${cacheKey}.png`);
+
+  if (fs.existsSync(cachePath)) {
+    console.log(`Dùng cache ảnh overlay: ${path.basename(cachePath)}`);
+    return cachePath;
+  }
+
+  console.log(`Pre-processing ảnh overlay → ${width}x${height}, alpha=${opacity}...`);
+  try {
+    execSync(
+      `ffmpeg -hide_banner -loglevel error -y -i "${imagePath}" -vf "scale=${width}:${height},format=rgba,colorchannelmixer=aa=${opacity}" -frames:v 1 "${cachePath}"`,
+      { encoding: 'utf-8', stdio: 'pipe' }
+    );
+    console.log(`Đã tạo cache: ${path.basename(cachePath)}`);
+  } catch (err) {
+    console.warn('Không tạo được cache ảnh overlay, dùng pipeline cũ:', err.message);
+    return null;
+  }
+  return cachePath;
 }
 
 function getFiles(dir, exts) {
@@ -51,27 +106,47 @@ function getImageFilesFromDir(dir) {
 
 async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
   return new Promise((resolve, reject) => {
+    const encoderLabel = GPU_INFO.encoderLabel;
     console.log(`\nĐang xử lý: ${path.basename(videoPath)}`);
+    console.log(`Encoder: ${encoderLabel}`);
     console.log(`Ảnh phủ (dưới, opacity ${IMAGE_OVERLAY_OPACITY}): ${path.basename(imagePath)}`);
     console.log(`Video phủ (trên, loop, opacity ${VIDEO_OVERLAY_OPACITY}): ${path.basename(overlayVideoPath)}`);
 
-    // 0 = video gốc; 1 = ảnh; 2 = video overlay (-stream_loop -1)
-    // Bước 1: ảnh lên nền [0:v] như cũ → [base1]
-    // Bước 2: video scale + alpha, overlay lên [base1] tới hết video gốc
-    const filterComplex =
-      `[1:v][0:v]scale2ref=w=iw:h=ih[img][vid];` +
-      `[img]format=argb,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
-      `[vid][timg]overlay=0:0[base1];` +
-      `[2:v][base1]scale2ref=w=iw:h=ih[ov][base];` +
-      `[ov]format=argb,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
-      `[base][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
+    const { width, height } = getVideoResolution(videoPath);
 
-    const args = [
-      '-y',
+    // [A] Pre-process ảnh overlay: scale + alpha 1 lần, dùng cache
+    const cachedImage = getPreprocessedImageOverlay(imagePath, width, height, IMAGE_OVERLAY_OPACITY);
+    const useImageCache = cachedImage != null;
+
+    const p = Math.min(49, Math.max(0, Math.floor(Number(VIDEO_CROP_PERCENT)) || 0));
+    const inner = 100 - 2 * p;
+    const headCrop = p > 0 && inner > 0 ? `[0:v]scale=iw*100/${inner}:ih*100/${inner},crop=iw*${inner}/100:ih*${inner}/100[v0];` : '';
+    const vid0 = p > 0 && inner > 0 ? '[v0]' : '[0:v]';
+    if (p > 0) {
+      console.log(`Video gốc: zoom + crop ${p}% mỗi phía (4 phía), đầu ra ${width}x${height}.`);
+    }
+
+    // [A] Ảnh đã baked alpha → chỉ overlay thuần, không scale/format/colorchannelmixer mỗi frame
+    // [E] Video overlay: dùng yuva420p thay vì argb (nhẹ hơn ~50% bộ nhớ/frame)
+    const imgFilter = useImageCache
+      ? `${vid0}[1:v]overlay=0:0[base1];`
+      : `[1:v]scale=${width}:${height},format=yuva420p,colorchannelmixer=aa=${IMAGE_OVERLAY_OPACITY}[timg];` +
+        `${vid0}[timg]overlay=0:0[base1];`;
+
+    const filterComplex =
+      headCrop +
+      imgFilter +
+      `[2:v]scale=${width}:${height},format=yuva420p,colorchannelmixer=aa=${VIDEO_OVERLAY_OPACITY}[ova];` +
+      `[base1][ova]overlay=0:0:shortest=1,format=yuv420p[outv]`;
+
+    // [C] Không dùng -hwaccel cuda: filter graph chạy CPU, hwaccel gây overhead copy GPU↔RAM
+    const args = ['-y', '-threads', '0'];
+
+    args.push(
       '-i',
       videoPath,
       '-i',
-      imagePath,
+      useImageCache ? cachedImage : imagePath,
       '-stream_loop',
       '-1',
       '-i',
@@ -82,31 +157,12 @@ async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
       '[outv]',
       '-map',
       '0:a?',
-      '-shortest',
-      '-c:v',
-      'libx264',
-      '-profile:v',
-      'main',
-      '-level',
-      '4.0',
-      '-pix_fmt',
-      'yuv420p',
-      '-crf',
-      '28',
-      '-preset',
-      'medium',
-      '-tag:v',
-      'avc1',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '128k',
-      '-movflags',
-      '+faststart',
-      '-f',
-      'mp4',
-      outputPath,
-    ];
+      '-shortest'
+    );
+
+    args.push(...GPU_INFO.videoEncodeArgs);
+
+    args.push('-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', outputPath);
 
     const ffmpeg = spawn('ffmpeg', args, { stdio: 'inherit' });
 
@@ -184,15 +240,12 @@ async function main(options = {}) {
       } catch (e) {}
     }
 
-    // Lấy overlays từ destFolder hoặc mặc định OVERLAY_DIR
-    let images = getFiles(destFolder, ['.png', '.jpg', '.jpeg', '.webp']);
-    if (images.length === 0) images = getFiles(OVERLAY_DIR, ['.png', '.jpg', '.jpeg', '.webp']);
-
-    let overlayVideos = getFiles(destFolder, ['.mp4', '.webm', '.mov', '.mkv']);
-    if (overlayVideos.length === 0) overlayVideos = getFiles(OVERLAY_DIR, ['.mp4', '.webm', '.mov', '.mkv']);
+    // Luôn lấy overlay từ backgrounds/overlay
+    const images = getFiles(OVERLAY_DIR, ['.png', '.jpg', '.jpeg', '.webp']);
+    const overlayVideos = getFiles(OVERLAY_DIR, ['.mp4', '.webm', '.mov', '.mkv']);
 
     if (images.length === 0 || overlayVideos.length === 0) {
-      throw new Error(`Cần ít nhất 1 ảnh và 1 video overlay trong ${destFolder} hoặc ${OVERLAY_DIR}`);
+      throw new Error(`Cần ít nhất 1 ảnh và 1 video overlay trong ${OVERLAY_DIR}`);
     }
 
     const overlayImage = images[0];
@@ -299,18 +352,6 @@ async function main(options = {}) {
     }
 
     console.log(`\nHoàn thành xử lý ${items.length} video.`);
-
-    // Đồng bộ trạng thái
-    try {
-      console.log('\nĐang tự động đồng bộ trạng thái vào file Excel...');
-      const syncScript = path.join(ROOT, 'contents', 'scripts', 'syncStatusToExcel.js');
-      if (fs.existsSync(syncScript)) {
-        const { execSync } = await import('child_process');
-        execSync(`node "${syncScript}"`, { stdio: 'inherit' });
-      }
-    } catch (e) {
-      console.error('Lỗi tự động đồng bộ:', e.message);
-    }
 
     return;
   }
