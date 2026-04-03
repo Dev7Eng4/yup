@@ -14,39 +14,17 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawnSync } from 'child_process';
-import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { MAKE_VIDEO_MODE, AUDIO_SPEED, STOCK_VIDEO, SUBTITLE, LOGO } from './constants/index.js';
 import { convertAudioFile } from './convertAudio.js';
+import { GPU_INFO } from './utils/hardware.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
-export const SPEED = 0.91;
+export const SPEED = AUDIO_SPEED;
 
-function detectNvenc() {
-  try {
-    execSync('ffmpeg -hide_banner -loglevel error -f lavfi -i nullsrc=s=64x64:d=0.04 -c:v h264_nvenc -f null -', {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    });
-    console.log('✅ Detected NVIDIA NVENC — sử dụng GPU encoder.');
-    return true;
-  } catch {
-    console.log('ℹ️ NVENC không khả dụng — fallback CPU (libx264 ultrafast).');
-    return false;
-  }
-}
-
-const HAS_NVENC = detectNvenc();
-
-/**
- * Số lượng video stock lấy từ backgrounds được tính theo thời lượng audio.
- * - < 25 phút: 15
- * - 25 - 40 phút: 18
- * - 40 - 60 phút: 21
- * - >= 60 phút: 25
- */
 function getDynamicStockVideoCount(audioDurationSec) {
   const minutes = audioDurationSec / 60;
   if (minutes < 25) return 15;
@@ -56,31 +34,12 @@ function getDynamicStockVideoCount(audioDurationSec) {
   return 28;
 }
 
-/** Crossfade giữa các clip stock (giây): clip trước mờ dần, clip sau sáng dần */
-const STOCK_CROSSFADE_SEC = 1;
-
-/** Thêm vài giây so với audio khi render stock (dự phòng merge / làm tròn frame). */
-const STOCK_RENDER_EXTRA_SEC = 15;
-
-/** Hệ số slow-motion cho video stock. 2.0 = gấp đôi thời lượng (nửa tốc độ). 1.0 = bình thường. */
-const STOCK_SLOWMO_FACTOR = 2.0;
-
-/** Canvas chuẩn cho clip stock — xfade bắt buộc cùng kích thước / pixel format */
-const STOCK_CANVAS_W = 1280;
-const STOCK_CANVAS_H = 720;
-
-/** FPS + timebase thống nhất — xfade yêu cầu timebase khớp (vd 1/15360 vs 1/25000 sẽ lỗi) */
-const STOCK_FPS = 30;
-
 /**
  * Chuỗi filter: scale/pad, yuv420p, CFR, settb — dùng cho -vf và cho từng nhánh trước xfade
  */
 function stockNormalizeFilterInner() {
-  const w = STOCK_CANVAS_W;
-  const h = STOCK_CANVAS_H;
-  const f = STOCK_FPS;
-  // setpts=N*PTS → slow-motion gấp STOCK_SLOWMO_FACTOR lần (vd 2.0 → video 13s thành 26s)
-  const slowmo = STOCK_SLOWMO_FACTOR !== 1.0 ? `,setpts=${STOCK_SLOWMO_FACTOR}*PTS` : '';
+  const { CANVAS_W: w, CANVAS_H: h, FPS: f, SLOWMO_FACTOR } = STOCK_VIDEO;
+  const slowmo = SLOWMO_FACTOR !== 1.0 ? `,setpts=${SLOWMO_FACTOR}*PTS` : '';
   return `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p${slowmo},fps=${f},settb=tb=1/90000,setsar=1`;
 }
 
@@ -98,7 +57,6 @@ function stockNormalizeFilterChain(inputLabel, outLabel) {
 /** Logo mặc định (single hoặc batch khi thư mục kênh không có ảnh) — hình tròn góc trên phải */
 const LOGO_PATH = path.join(ROOT, 'logo', 'catLogo.png');
 
-/** Ảnh trong thư mục (không đệ quy), sort theo tên — batch: lấy 1 file đầu làm logo kênh */
 function getImageFilesFromDir(dir) {
   if (!dir || !fs.existsSync(dir)) return [];
   return fs
@@ -107,25 +65,6 @@ function getImageFilesFromDir(dir) {
     .sort((a, b) => a.localeCompare(b))
     .map(f => path.join(dir, f));
 }
-const LOGO_SIZE = 80;
-const LOGO_MARGIN_TOP = 20;
-const LOGO_MARGIN_RIGHT = 20;
-
-/** Khung nền tối phía dưới cho subtitle (full width) */
-const SUB_BOX_HEIGHT = 200;
-const SUB_BOX_OPACITY = 0.5;
-
-/** Kích thước font chữ của Subtitle */
-const SUB_FONT_SIZE = 80;
-
-/** Khoảng cách từ mép trên của dải nền màu đen rơi xuống chữ (padding top) */
-const SUB_PADDING_TOP = 15;
-
-/** Paddings margin trái/phải cho subtitle so với viền màn hình video */
-const SUB_PADDING_HORIZONTAL = 40;
-
-/** Khoảng cách giữa các ký tự (ASS Spacing, pixel) — tăng nếu chữ vẫn sát */
-const SUBTITLE_CHAR_SPACING = 2;
 
 /**
  * Lấy duration (giây) của file media bằng ffprobe
@@ -223,10 +162,9 @@ function getStockVideos(backgroundsDir, count) {
  * Trước đây chỉ so tổng sum clip → lệch (n−1)×fade (vd ~40 clip × 1s ≈ mất 40s) → cuối video đứng hình.
  */
 function buildStockSegmentPlan(videoPaths, requiredXfadeOutputSec) {
-  // Nhân duration với STOCK_SLOWMO_FACTOR vì setpts sẽ kéo dài video tương ứng
-  const durations = videoPaths.map(p => getDuration(p) * STOCK_SLOWMO_FACTOR);
+  const durations = videoPaths.map(p => getDuration(p) * STOCK_VIDEO.SLOWMO_FACTOR);
   const minSegmentDur = Math.min(...durations);
-  const fadeEst = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegmentDur * 0.45));
+  const fadeEst = Math.max(0.15, Math.min(STOCK_VIDEO.CROSSFADE_SEC, minSegmentDur * 0.45));
   const segments = [];
   let accumulated = 0;
   let idx = 0;
@@ -268,7 +206,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
   }
 
   const minDur = Math.min(...segments.map(s => s.duration));
-  const fade = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minDur * 0.45));
+  const fade = Math.max(0.15, Math.min(STOCK_VIDEO.CROSSFADE_SEC, minDur * 0.45));
 
   const norm = [];
   for (let i = 0; i < segments.length; i++) {
@@ -403,17 +341,17 @@ function convertSrtToAss(srtPath, assPath) {
 
   // Alignment=8 (Top Center) - chữ sẽ neo ở mép trên và văn bản mọc dần xuống dưới nếu nhiều dòng.
   // MarginV đo từ màn hình xuống mép trên chữ (= H_video - H_box + Padding_Top)
-  const marginV = STOCK_CANVAS_H - SUB_BOX_HEIGHT + SUB_PADDING_TOP;
+  const marginV = STOCK_VIDEO.CANVAS_H - SUBTITLE.BOX_HEIGHT + SUBTITLE.PADDING_TOP;
 
   const header = `[Script Info]
 ScriptType: v4.00+
-PlayResX: ${STOCK_CANVAS_W}
-PlayResY: ${STOCK_CANVAS_H}
+PlayResX: ${STOCK_VIDEO.CANVAS_W}
+PlayResY: ${STOCK_VIDEO.CANVAS_H}
 WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${SUB_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,${SUBTITLE_CHAR_SPACING},0,1,2.0,0,8,${SUB_PADDING_HORIZONTAL},${SUB_PADDING_HORIZONTAL},${marginV},1
+Style: Default,Arial,${SUBTITLE.FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,${SUBTITLE.CHAR_SPACING},0,1,2.0,0,8,${SUBTITLE.PADDING_HORIZONTAL},${SUBTITLE.PADDING_HORIZONTAL},${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -453,8 +391,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const textLines = lines.slice(timeLineIdx + 1);
 
     // Tính toán số lượng kí tự tối đa trên 1 dòng để tự động quấn dòng (Word Wrap Programmatic cho chữ CJK)
-    const cw = STOCK_CANVAS_W - SUB_PADDING_HORIZONTAL * 2;
-    const cSize = SUB_FONT_SIZE + SUBTITLE_CHAR_SPACING;
+    const cw = STOCK_VIDEO.CANVAS_W - SUBTITLE.PADDING_HORIZONTAL * 2;
+    const cSize = SUBTITLE.FONT_SIZE + SUBTITLE.CHAR_SPACING;
     const maxCharsPerLine = Math.max(1, Math.floor(cw / cSize));
 
     const wrappedLines = [];
@@ -550,11 +488,11 @@ async function processOne(bgNameArg, options = {}) {
   const tempVideoPath = path.join(OUTPUT_DIR, 'temp_video.mp4');
   const outputPath = path.join(OUTPUT_DIR, `${baseName}-with-bg.mp4`);
 
-  const stockRenderTarget = audioDurationAfterTempo + STOCK_RENDER_EXTRA_SEC;
+  const stockRenderTarget = audioDurationAfterTempo + STOCK_VIDEO.RENDER_EXTRA_SEC;
   const stockSegments = buildStockSegmentPlan(videoPaths, stockRenderTarget);
   if (stockSegments.length > 1) {
     const minSegDur = Math.min(...stockSegments.map(s => s.duration));
-    const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
+    const fadeHint = Math.max(0.15, Math.min(STOCK_VIDEO.CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
       `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
         1
@@ -569,44 +507,25 @@ async function processOne(bgNameArg, options = {}) {
   const tempSubPath = subtitlePath ? path.join(OUTPUT_DIR, 'temp_sub.ass') : null;
 
   const videoToScale = `[0:v]null[vpadded]`;
-  const videoEncodeArgs = HAS_NVENC
-    ? [
-        '-c:v',
-        'h264_nvenc',
-        '-preset',
-        'p1',
-        '-rc',
-        'vbr',
-        '-cq',
-        '28',
-        '-pix_fmt',
-        'yuv420p',
-        '-tag:v',
-        'avc1',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-      ]
-    : ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'ultrafast', '-tag:v', 'avc1', '-c:a', 'aac', '-b:a', '128k'];
+  const videoEncodeArgs = [...GPU_INFO.videoEncodeArgs, '-c:a', 'aac', '-b:a', '128k'];
   const logoPathForMerge = options.logoPath != null ? options.logoPath : LOGO_PATH;
   // const hasLogo = fs.existsSync(logoPathForMerge);
   const hasLogo = false;
 
   const buildLogoOverlay = inputLabel => {
     if (!hasLogo) return inputLabel;
-    const r = Math.floor(LOGO_SIZE / 2);
+    const r = Math.floor(LOGO.SIZE / 2);
     const geqExpr = `if(lte(hypot(X-W/2,Y-H/2),${r}),255,0)`;
-    return `[2:v]scale=${LOGO_SIZE}:${LOGO_SIZE},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${geqExpr}'[logo];[${inputLabel}][logo]overlay=main_w-overlay_w-${LOGO_MARGIN_RIGHT}:${LOGO_MARGIN_TOP}[vout]`;
+    return `[2:v]scale=${LOGO.SIZE}:${LOGO.SIZE},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='${geqExpr}'[logo];[${inputLabel}][logo]overlay=main_w-overlay_w-${LOGO.MARGIN_RIGHT}:${LOGO.MARGIN_TOP}[vout]`;
   };
 
-  const mergeEncoderLabel = HAS_NVENC ? 'GPU (h264_nvenc p1)' : 'CPU (libx264 ultrafast)';
+  const mergeEncoderLabel = GPU_INFO.encoderLabel;
 
   if (subtitlePath) {
     convertSrtToAss(subtitlePath, tempSubPath);
 
     const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
-    const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
+    const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUBTITLE.BOX_HEIGHT}:color=black@${SUBTITLE.BOX_OPACITY}:t=fill`;
     const subFilter = `subtitles='${subPathEscaped}'`;
 
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;

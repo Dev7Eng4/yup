@@ -31,3 +31,36 @@ export const META_DATA = {
   DESCRIPTION: 'Description',
   TAGS: 'Tags',
 };
+
+export const DEFAULT_VIDEO = {
+  BACKGROUND_VIDEO: 'cat',
+};
+
+export const AUDIO_SPEED = 0.91;
+
+export const STOCK_VIDEO = {
+  CROSSFADE_SEC: 1,
+  RENDER_EXTRA_SEC: 15,
+  SLOWMO_FACTOR: 2.0,
+  CANVAS_W: 1280,
+  CANVAS_H: 720,
+  FPS: 30,
+  BITRATE: '4M',
+  MAX_BITRATE: '5M',
+  BUFSIZE: '8M',
+};
+
+export const SUBTITLE = {
+  BOX_HEIGHT: 200,
+  BOX_OPACITY: 0.5,
+  FONT_SIZE: 80,
+  PADDING_TOP: 15,
+  PADDING_HORIZONTAL: 40,
+  CHAR_SPACING: 2,
+};
+
+export const LOGO = {
+  SIZE: 80,
+  MARGIN_TOP: 20,
+  MARGIN_RIGHT: 20,
+};
