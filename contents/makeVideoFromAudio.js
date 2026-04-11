@@ -2,7 +2,7 @@
  * Tạo video từ audio + video stock
  * - Audio từ folder downloads
  * - N video stock từ backgrounds/<tên> (N = STOCK_VIDEO_COUNT, cat, dog, ...)
- * - Bước 1: chỉnh tempo audio (ffmpeg atempo; nhỏ hơn 1 = chậm hơn → thời lượng dài hơn)
+ * - Bước 1: chỉnh tempo audio (ffmpeg atempo; tốc độ random ~0.93–0.95 mỗi lần render; nhỏ hơn 1 = chậm hơn → dài hơn)
  * - Độ dài video = độ dài audio (sau khi chỉnh tốc độ), loop video nếu không đủ
  * - Phụ đề: copy file .srt/.vtt từ downloads/ — nếu SPEED ≠ 1 sẽ tự động scale timestamps cho khớp tốc độ audio
  * - Ghép stock: crossfade (xfade) giữa các clip — clip cũ mờ dần, clip mới sáng dần
@@ -22,7 +22,14 @@ const ROOT = path.join(__dirname, '..');
 const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OUTPUT_DIR = path.join(ROOT, 'outputs');
 
-export const SPEED = 0.91;
+/** Tốc độ phát audio (atempo): mỗi lần render chọn ngẫu nhiên trong khoảng này */
+const SPEED_MIN = 0.93;
+const SPEED_MAX = 0.95;
+
+/** @returns {number} Giá trị trong [SPEED_MIN, SPEED_MAX) */
+export function randomPlaybackSpeed() {
+  return SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN);
+}
 
 function detectNvenc() {
   try {
@@ -118,6 +125,15 @@ const SUB_BOX_OPACITY = 0.5;
 /** Kích thước font chữ của Subtitle */
 const SUB_FONT_SIZE = 80;
 
+/** Tên font trong ASS — khớp family trong NotoSansJP-Black.ttf; libass nạp từ SUB_FONTS_DIR */
+const SUB_FONT_NAME = 'Noto Sans JP';
+
+/** Thư mục chứa font phụ đề (ffmpeg subtitles=...:fontsdir=) — không dùng font hệ thống */
+const SUB_FONTS_DIR = path.join(ROOT, 'assets', 'fonts');
+
+/** File font cố định trong repo (Black) */
+const SUB_FONT_FILE = path.join(SUB_FONTS_DIR, 'NotoSansJP-Black.ttf');
+
 /** Khoảng cách từ mép trên của dải nền màu đen rơi xuống chữ (padding top) */
 const SUB_PADDING_TOP = 15;
 
@@ -126,6 +142,11 @@ const SUB_PADDING_HORIZONTAL = 40;
 
 /** Khoảng cách giữa các ký tự (ASS Spacing, pixel) — tăng nếu chữ vẫn sát */
 const SUBTITLE_CHAR_SPACING = 2;
+
+/** Đường dẫn cho filter ffmpeg subtitles (escape `:` ổ D: Windows, dấu nháy) */
+function escapePathForFfmpegSubtitles(p) {
+  return p.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
+}
 
 /**
  * Lấy duration (giây) của file media bằng ffprobe
@@ -243,59 +264,60 @@ function buildStockSegmentPlan(videoPaths, requiredXfadeOutputSec) {
 }
 
 /**
- * Ghép nhiều clip stock bằng xfade (fade): kết thúc clip trước mờ, clip sau hiện dần.
+ * Số clip tối đa trong 1 lần xfade — tránh OOM khi FFmpeg load quá nhiều stream cùng lúc.
+ * 30 clip × ~26s mỗi clip (slow-mo 2×) ≈ ~13 phút / batch, đủ an toàn cho 16GB RAM.
+ */
+const MAX_XFADE_BATCH = 30;
+
+/**
+ * Render 1 batch clip stock bằng xfade (nội bộ, không export).
  * Dùng spawnSync + filter_complex_script để tránh lệnh quá dài trên Windows.
  */
-function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, filterScriptPath) {
-  if (segments.length === 0) {
-    throw new Error('Không có clip stock để ghép.');
-  }
-
-  if (segments.length === 1) {
+function _renderXfadeBatch(batchSegments, batchDuration, outputPath, filterScriptPath) {
+  if (batchSegments.length === 1) {
     const vf = stockNormalizeFilterInner();
-    const oneDur = segments[0].duration;
+    const oneDur = batchSegments[0].duration;
     const args = ['-y'];
-    if (oneDur < targetDuration - 0.01) {
-      args.push('-stream_loop', '-1', '-i', segments[0].path);
+    if (oneDur < batchDuration - 0.01) {
+      args.push('-stream_loop', '-1', '-i', batchSegments[0].path);
     } else {
-      args.push('-i', segments[0].path);
+      args.push('-i', batchSegments[0].path);
     }
-    args.push('-vf', vf, '-t', String(targetDuration), '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast', '-an', outputPath);
+    args.push('-vf', vf, '-t', String(batchDuration), '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast', '-an', outputPath);
     const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
     if (r.error) throw r.error;
-    if (r.status !== 0) throw new Error(`ffmpeg thoát mã ${r.status}`);
+    if (r.status !== 0) throw new Error(`ffmpeg (batch single) thoát mã ${r.status}`);
     return;
   }
 
-  const minDur = Math.min(...segments.map(s => s.duration));
+  const minDur = Math.min(...batchSegments.map(s => s.duration));
   const fade = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minDur * 0.45));
 
   const norm = [];
-  for (let i = 0; i < segments.length; i++) {
+  for (let i = 0; i < batchSegments.length; i++) {
     norm.push(stockNormalizeFilterChain(`${i}:v`, `s${i}`));
   }
 
   const xfadeParts = [];
-  let accLen = segments[0].duration;
+  let accLen = batchSegments[0].duration;
   let cur = 's0';
 
-  for (let i = 1; i < segments.length; i++) {
+  for (let i = 1; i < batchSegments.length; i++) {
     const offset = accLen - fade;
     if (offset < 0) {
       throw new Error(`Clip quá ngắn so với crossfade (fade=${fade.toFixed(2)}s).`);
     }
-    const outTag = i === segments.length - 1 ? 'vout' : `xf${i}`;
+    const outTag = i === batchSegments.length - 1 ? 'vout' : `xf${i}`;
     xfadeParts.push(`[${cur}][s${i}]xfade=transition=fade:duration=${fade.toFixed(4)}:offset=${offset.toFixed(4)}[${outTag}]`);
     cur = outTag;
-    accLen += segments[i].duration - fade;
+    accLen += batchSegments[i].duration - fade;
   }
 
-  // Phải nối bằng `;` — xuống dòng khiến ffmpeg (đặc biệt trên Windows) parse sai offset/số thập phân
   const fullGraph = [...norm, ...xfadeParts].join(';');
   fs.writeFileSync(filterScriptPath, fullGraph, 'utf-8');
 
   const args = ['-y'];
-  for (const s of segments) {
+  for (const s of batchSegments) {
     args.push('-i', s.path);
   }
   args.push(
@@ -304,7 +326,7 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-map',
     '[vout]',
     '-t',
-    String(targetDuration),
+    String(batchDuration),
     '-c:v',
     'libx264',
     '-crf',
@@ -312,21 +334,91 @@ function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, fi
     '-preset',
     'ultrafast',
     '-an',
-    outputPath
+    outputPath,
   );
 
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit', shell: false });
   if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(`ffmpeg thoát mã ${r.status}`);
+  if (r.status !== 0) throw new Error(`ffmpeg (batch xfade) thoát mã ${r.status}`);
+}
+
+/**
+ * Ghép nhiều clip stock bằng xfade (fade): kết thúc clip trước mờ, clip sau hiện dần.
+ *
+ * Khi số clip > MAX_XFADE_BATCH (30), chia thành nhiều batch:
+ *  - Mỗi batch render xfade riêng → file tạm
+ *  - Nối các file tạm bằng concat demuxer (rất ít RAM)
+ *
+ * Điều này tránh lỗi "Cannot allocate memory" khi FFmpeg phải giữ hàng trăm
+ * input stream trong bộ nhớ cùng lúc.
+ */
+function renderStockVideoWithCrossfades(segments, targetDuration, outputPath, filterScriptPath) {
+  if (segments.length === 0) {
+    throw new Error('Không có clip stock để ghép.');
+  }
+
+  // Ít hơn hoặc bằng MAX_XFADE_BATCH → render trực tiếp (không cần chia batch)
+  if (segments.length <= MAX_XFADE_BATCH) {
+    _renderXfadeBatch(segments, targetDuration, outputPath, filterScriptPath);
+    return;
+  }
+
+  // --- Chia batch ---
+  console.log(`  ⚠ ${segments.length} clip > ${MAX_XFADE_BATCH} — chia thành nhiều batch để tránh OOM...`);
+
+  const batches = [];
+  for (let i = 0; i < segments.length; i += MAX_XFADE_BATCH) {
+    batches.push(segments.slice(i, i + MAX_XFADE_BATCH));
+  }
+
+  // Render từng batch → file tạm
+  const batchOutputs = [];
+  const outputDir = path.dirname(outputPath);
+
+  for (let b = 0; b < batches.length; b++) {
+    const batch = batches[b];
+    const batchFile = path.join(outputDir, `temp_xfade_batch_${b}.mp4`);
+    const batchFilter = path.join(outputDir, `xfade_batch_${b}.txt`);
+
+    // Tính duration cho batch: dùng tổng xfade output, hoặc targetDuration cho batch cuối
+    const minDur = Math.min(...batch.map(s => s.duration));
+    const fadeEst = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minDur * 0.45));
+    const batchRawDur = batch.reduce((sum, s) => sum + s.duration, 0) - (batch.length - 1) * fadeEst;
+    // Không giới hạn -t cho batch riêng lẻ (để giữ đủ nội dung cho concat)
+    const batchDur = batchRawDur + 2; // +2s dự phòng tránh cắt sớm
+
+    console.log(`  Batch ${b + 1}/${batches.length}: ${batch.length} clip (~${batchRawDur.toFixed(0)}s)...`);
+    _renderXfadeBatch(batch, batchDur, batchFile, batchFilter);
+
+    if (fs.existsSync(batchFilter)) fs.unlinkSync(batchFilter);
+    batchOutputs.push(batchFile);
+  }
+
+  // Nối các batch bằng concat demuxer (rất ít RAM)
+  const concatListPath = path.join(outputDir, 'concat_batches.txt');
+  const concatContent = batchOutputs.map(f => `file '${f.replace(/\\/g, '/')}'`).join('\n');
+  fs.writeFileSync(concatListPath, concatContent, 'utf-8');
+
+  console.log(`  Đang nối ${batchOutputs.length} batch bằng concat demuxer...`);
+  const concatArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', concatListPath, '-t', String(targetDuration), '-c', 'copy', outputPath];
+  const cr = spawnSync('ffmpeg', concatArgs, { stdio: 'inherit', shell: false });
+  if (cr.error) throw cr.error;
+  if (cr.status !== 0) throw new Error(`ffmpeg (concat batches) thoát mã ${cr.status}`);
+
+  // Dọn dẹp file tạm
+  for (const f of batchOutputs) {
+    if (fs.existsSync(f)) fs.unlinkSync(f);
+  }
+  if (fs.existsSync(concatListPath)) fs.unlinkSync(concatListPath);
+  console.log(`  ✅ Đã nối ${batchOutputs.length} batch thành công.`);
 }
 
 /**
  * Tạo bản audio đã chỉnh tempo (atempo=SPEED) — file tạm dùng cho các bước sau.
- * Nếu SPEED == 1.0, chỉ copy / re-encode nhẹ (không thay đổi tốc độ).
- * Nếu SPEED != 1.0, gọi convertAudioFile từ convertAudio.js.
+ * Nếu speed == 1.0, chỉ copy / re-encode nhẹ (không thay đổi tốc độ).
+ * Nếu speed != 1.0, gọi convertAudioFile từ convertAudio.js.
  */
-function buildSpeedAdjustedAudio(sourcePath, destPath) {
-  const speed = SPEED;
+function buildSpeedAdjustedAudio(sourcePath, destPath, speed) {
   if (speed === 1) {
     // Không cần chỉnh tốc độ — re-encode sang m4a để đồng nhất format
     console.log('SPEED = 1.0 → giữ nguyên tốc độ audio, chỉ re-encode sang m4a...');
@@ -340,15 +432,15 @@ function buildSpeedAdjustedAudio(sourcePath, destPath) {
   const pctChange = ((1 / speed - 1) * 100).toFixed(1);
   console.log(
     `Đang chỉnh tốc độ audio (SPEED=${speed}: ${speed < 1 ? 'chậm hơn → dài hơn' : 'nhanh hơn → ngắn hơn'} ~${Math.abs(
-      pctChange
-    )}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`
+      pctChange,
+    )}%; dự kiến ~${formatClockDuration(expectedAfter)} / ${expectedAfter.toFixed(1)}s)...`,
   );
   convertAudioFile(sourcePath, destPath, speed);
   const durAfter = getAudioDurationSeconds(destPath);
   console.log(
     `Sau chỉnh tốc độ: ${formatClockDuration(durBefore)} (${durBefore.toFixed(1)}s) → ${formatClockDuration(durAfter)} (${durAfter.toFixed(
-      1
-    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`
+      1,
+    )}s) | dự kiến ~${expectedAfter.toFixed(1)}s`,
   );
 }
 
@@ -413,7 +505,7 @@ WrapStyle: 1
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${SUB_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,${SUBTITLE_CHAR_SPACING},0,1,2.0,0,8,${SUB_PADDING_HORIZONTAL},${SUB_PADDING_HORIZONTAL},${marginV},1
+Style: Default,${SUB_FONT_NAME},${SUB_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,${SUBTITLE_CHAR_SPACING},0,1,2.0,0,8,${SUB_PADDING_HORIZONTAL},${SUB_PADDING_HORIZONTAL},${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -515,17 +607,20 @@ async function processOne(bgNameArg, options = {}) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
+  const speed = randomPlaybackSpeed();
+  console.log(`SPEED (random ${SPEED_MIN}–${SPEED_MAX}): ${speed.toFixed(4)}`);
+
   // 1. Chỉnh tốc độ audio trước để có thời lượng chính xác
-  const slowedAudioPath = path.join(OUTPUT_DIR, `temp_audio_speed${Math.round(SPEED * 100)}.m4a`);
-  buildSpeedAdjustedAudio(audioPath, slowedAudioPath);
+  const slowedAudioPath = path.join(OUTPUT_DIR, `temp_audio_speed_${speed.toFixed(4)}.m4a`);
+  buildSpeedAdjustedAudio(audioPath, slowedAudioPath, speed);
   const workingAudioPath = slowedAudioPath;
 
   /** Luôn đo trên file đã chỉnh tốc độ (m4a tạm), không dùng độ dài MP3 gốc */
   const audioDurationAfterTempo = getAudioDurationSeconds(workingAudioPath);
   console.log(
-    `Thời lượng audio sau SPEED=${SPEED} (dùng cho stock + merge): ${formatClockDuration(
-      audioDurationAfterTempo
-    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`
+    `Thời lượng audio sau SPEED=${speed} (dùng cho stock + merge): ${formatClockDuration(
+      audioDurationAfterTempo,
+    )} (${audioDurationAfterTempo.toFixed(1)}s) — ${path.basename(workingAudioPath)}`,
   );
 
   // 2. Lấy video stock dựa trên thời lượng MỚI
@@ -533,14 +628,14 @@ async function processOne(bgNameArg, options = {}) {
   const videoPaths = getStockVideos(backgroundsDir, stockVideoCount);
   console.log(`Stock videos (${stockVideoCount} clip): ${videoPaths.map(p => path.basename(p)).join(', ')}`);
 
-  // 3. Xử lý phụ đề (scale timestamps nếu SPEED != 1)
+  // 3. Xử lý phụ đề (scale timestamps nếu speed != 1)
   let subtitlePath = getSubtitleFile();
   let scaledSrtPath = null;
-  if (subtitlePath && SPEED !== 1) {
+  if (subtitlePath && speed !== 1) {
     scaledSrtPath = path.join(OUTPUT_DIR, 'temp_scaled_sub' + path.extname(subtitlePath));
-    scaleSrtTimestamps(subtitlePath, scaledSrtPath, SPEED);
+    scaleSrtTimestamps(subtitlePath, scaledSrtPath, speed);
     subtitlePath = scaledSrtPath; // Dùng file SRT đã scale
-    console.log(`Phụ đề (đã scale theo SPEED=${SPEED}): ${path.basename(scaledSrtPath)}`);
+    console.log(`Phụ đề (đã scale theo SPEED=${speed}): ${path.basename(scaledSrtPath)}`);
   } else if (subtitlePath) {
     console.log(`Phụ đề: ${path.basename(subtitlePath)}`);
   }
@@ -557,8 +652,8 @@ async function processOne(bgNameArg, options = {}) {
     const fadeHint = Math.max(0.15, Math.min(STOCK_CROSSFADE_SEC, minSegDur * 0.45));
     console.log(
       `Đang tạo nền stock (${stockSegments.length} clip, crossfade ~${fadeHint.toFixed(2)}s; độ dài xfade ≥ ${stockRenderTarget.toFixed(
-        1
-      )}s)...`
+        1,
+      )}s)...`,
     );
   } else {
     console.log('Đang tạo nền stock (1 clip, loop nếu clip ngắn hơn audio)...');
@@ -603,11 +698,15 @@ async function processOne(bgNameArg, options = {}) {
   const mergeEncoderLabel = HAS_NVENC ? 'GPU (h264_nvenc p1)' : 'CPU (libx264 ultrafast)';
 
   if (subtitlePath) {
+    if (!fs.existsSync(SUB_FONT_FILE)) {
+      throw new Error(`Không tìm thấy font phụ đề (cần file trong repo): ${SUB_FONT_FILE}`);
+    }
     convertSrtToAss(subtitlePath, tempSubPath);
 
-    const subPathEscaped = tempSubPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\''");
+    const subPathEscaped = escapePathForFfmpegSubtitles(tempSubPath);
+    const fontsDirEscaped = escapePathForFfmpegSubtitles(SUB_FONTS_DIR);
     const drawboxFilter = `drawbox=x=0:y=ih-h:w=iw:h=${SUB_BOX_HEIGHT}:color=black@${SUB_BOX_OPACITY}:t=fill`;
-    const subFilter = `subtitles='${subPathEscaped}'`;
+    const subFilter = `subtitles='${subPathEscaped}:fontsdir=${fontsDirEscaped}'`;
 
     const v1 = `${videoToScale};[vpadded]${drawboxFilter}[v1b];[v1b]${subFilter}[v2]`;
     const filterComplexFinal = hasLogo ? v1 + `;${buildLogoOverlay('v2')}` : v1 + ';[v2]copy[vout]';
@@ -624,7 +723,7 @@ async function processOne(bgNameArg, options = {}) {
       ...videoEncodeArgs,
       '-t',
       String(audioDurationAfterTempo),
-      outputPath
+      outputPath,
     );
 
     console.log(`Đang merge video + audio + subtitle ASS (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));
@@ -649,7 +748,7 @@ async function processOne(bgNameArg, options = {}) {
       ...videoEncodeArgs,
       '-t',
       String(audioDurationAfterTempo),
-      outputPath
+      outputPath,
     );
 
     console.log(`Đang merge video + audio (720p, ${mergeEncoderLabel})` + (hasLogo ? ' + logo...' : '...'));
@@ -761,7 +860,7 @@ async function main(options = {}) {
       console.log(`Logo kênh (dùng cho mọi video batch): ${batchChannelLogoPath}`);
       if (channelLogoImages.length > 1) {
         console.warn(
-          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`
+          `Có ${channelLogoImages.length} ảnh trong thư mục; dùng 1 file đầu tiên (theo tên): ${path.basename(batchChannelLogoPath)}`,
         );
       }
     }

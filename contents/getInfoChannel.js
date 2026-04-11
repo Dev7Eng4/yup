@@ -14,6 +14,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_OUTPUT_DIR = path.join(__dirname, '..', 'channels');
 const INPUT_FILE = path.join(__dirname, '..', 'input.txt');
 
+/** Thời lượng tối thiểu (giây) để coi là video dài — loại bỏ Shorts (≤ 60s) */
+const MIN_DURATION_SEC = 480;
+
 /** Options cho cột Trạng thái (dropdown) */
 const TRANG_THAI_OPTIONS = ['', 'Đã tạo video', 'Đã đăng video'];
 
@@ -84,14 +87,18 @@ async function getChannelInfo(url) {
           addHeader: ['referer:youtube.com', 'user-agent:googlebot'],
         });
         entries = rawPlaylist.entries || [];
-        videoLinks = entries
-          .filter(e => e.id && e.id.length === 11)
-          .map(e => ({
-            url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
-            title: e.title || '',
-            viewCount: e.view_count || 0,
-            duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
-          }));
+        const allEntries = entries.filter(e => e.id && e.id.length === 11);
+        const longEntries = allEntries.filter(e => (e.duration || 0) >= MIN_DURATION_SEC);
+        const skippedShorts = allEntries.length - longEntries.length;
+        if (skippedShorts > 0) {
+          console.log(`Bỏ qua ${skippedShorts} video ngắn (Shorts ≤ ${MIN_DURATION_SEC - 1}s), giữ lại ${longEntries.length} video dài.`);
+        }
+        videoLinks = longEntries.map(e => ({
+          url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+          title: e.title || '',
+          viewCount: e.view_count || 0,
+          duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
+        }));
       } catch (err) {
         console.warn('Không lấy được danh sách video:', err.message);
       }
@@ -101,14 +108,18 @@ async function getChannelInfo(url) {
   // Nếu là playlist URL trực tiếp, dùng entries từ rawMeta
   if (entries.length === 0 && rawMeta.entries) {
     entries = rawMeta.entries;
-    videoLinks = entries
-      .filter(e => e.id && e.id.length === 11)
-      .map(e => ({
-        url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
-        title: e.title || '',
-        viewCount: e.view_count || 0,
-        duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
-      }));
+    const allEntries2 = entries.filter(e => e.id && e.id.length === 11);
+    const longEntries2 = allEntries2.filter(e => (e.duration || 0) >= MIN_DURATION_SEC);
+    const skippedShorts2 = allEntries2.length - longEntries2.length;
+    if (skippedShorts2 > 0) {
+      console.log(`Bỏ qua ${skippedShorts2} video ngắn (Shorts ≤ ${MIN_DURATION_SEC - 1}s), giữ lại ${longEntries2.length} video dài.`);
+    }
+    videoLinks = longEntries2.map(e => ({
+      url: e.url || `https://www.youtube.com/watch?v=${e.id}`,
+      title: e.title || '',
+      viewCount: e.view_count || 0,
+      duration: e.duration_string || (e.duration ? formatDuration(e.duration) : '00:00:00'),
+    }));
   }
 
   return {

@@ -56,7 +56,7 @@ async function sendPromptToPage(page, prompt, label) {
 
   await clickElement(
     page,
-    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div[2]/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea',
+    '/html/body/chat-app/main/side-navigation-v2/mat-sidenav-container/mat-sidenav-content/div/div/chat-window/div/input-container/fieldset/input-area-v2/div/div/div[1]/div/div/rich-textarea/div[1]',
   );
 
   await page.waitForTimeout(500);
@@ -158,7 +158,7 @@ async function runGeminiVideoMetaPrompts(page, { title, srtContent, language }) 
     console.log(`Đang tóm tắt phần ${chunkIndex}/${totalChunks}...`);
 
     const plainChunk = srtToPlainText(chunk);
-    console.log('🚀 ~ runGeminiVideoMetaPrompts ~ plainChunk:', plainChunk);
+    // console.log('🚀 ~ runGeminiVideoMetaPrompts ~ plainChunk:', plainChunk);
     const prompt = prompts.createPromptSummaryContent(plainChunk, lastSummary);
     const result = await sendPromptToPage(page, prompt, `tóm tắt phần ${chunkIndex}/${totalChunks}`);
 

@@ -1,7 +1,7 @@
 /**
  * Giảm/tăng tốc độ đọc audio:
  * - Tìm file audio trong downloads/
- * - Tạo file mới với tốc độ SPEED (giữ pitch)
+ * - Tạo file mới với tốc độ random (0.93–0.95, giữ pitch)
  *
  * Có 2 cách dùng:
  *   1. CLI interactive (default export main)
@@ -12,7 +12,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
-import { SPEED } from './makeVideoFromAudio.js';
+import { randomPlaybackSpeed } from './makeVideoFromAudio.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -70,5 +70,5 @@ export default async function main() {
   const baseName = path.basename(audioFile, ext);
   const outputPath = path.join(DOWNLOADS_DIR, `${baseName}_slow${ext}`);
 
-  convertAudioFile(inputPath, outputPath, SPEED);
+  convertAudioFile(inputPath, outputPath, randomPlaybackSpeed());
 }
