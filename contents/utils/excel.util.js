@@ -26,9 +26,8 @@ async function readVideoUrlsFromFile(inputFile = null) {
         .toLowerCase()
         .includes('status')
     );
+
     const bgIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'background video');
-    const outroVideoIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro video');
-    const outroTimeIdx = headerRow.values.findIndex(v => String(v || '').toLowerCase() === 'outro time');
     const items = [];
     for (let i = 2; i <= sheet.rowCount; i++) {
       const row = sheet.getRow(i);
@@ -38,16 +37,11 @@ async function readVideoUrlsFromFile(inputFile = null) {
       }
       const rawVal = row.getCell(videoIdx).value;
       const val = rawVal && typeof rawVal === 'object' ? String(rawVal.text || rawVal.hyperlink || '').trim() : String(rawVal || '').trim();
-      const bgVal = bgIdx >= 0 ? String(row.getCell(bgIdx).value || '').trim() : 'cat';
-      const outroVideoStr = outroVideoIdx >= 0 ? String(row.getCell(outroVideoIdx).value || '').trim() : '';
-      const outroTimeStr = outroTimeIdx >= 0 ? String(row.getCell(outroTimeIdx).value || '').trim() : '';
-      const outroTimeNum = parseFloat(outroTimeStr) || 0;
+      const bgVal = bgIdx >= 0 ? String(row.getCell(bgIdx).value || '').trim() : DEFAULT_VIDEO.BACKGROUND_VIDEO;
       if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
         items.push({
           url: val,
-          background: bgVal || 'cat',
-          outroVideo: outroVideoStr,
-          outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
+          background: bgVal || DEFAULT_VIDEO.BACKGROUND_VIDEO,
         });
       }
     }
@@ -62,8 +56,6 @@ async function readVideoUrlsFromFile(inputFile = null) {
   if (videoIdx < 0) throw new Error('Không tìm thấy cột LINK VIDEO trong CSV.');
   const trangThaiIdx = headers.findIndex(h => h.toLowerCase().includes('status'));
   const bgIdx = headers.findIndex(h => h.toLowerCase() === 'background video');
-  const outroVideoIdx = headers.findIndex(h => h.toLowerCase() === 'outro video');
-  const outroTimeIdx = headers.findIndex(h => h.toLowerCase() === 'outro time');
   const items = [];
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
@@ -73,15 +65,10 @@ async function readVideoUrlsFromFile(inputFile = null) {
     }
     const val = cells[videoIdx] || '';
     const bgVal = bgIdx >= 0 ? (cells[bgIdx] || '').trim() : 'cat';
-    const outroVideoStr = outroVideoIdx >= 0 ? (cells[outroVideoIdx] || '').trim() : '';
-    const outroTimeStr = outroTimeIdx >= 0 ? (cells[outroTimeIdx] || '').trim() : '';
-    const outroTimeNum = parseFloat(outroTimeStr) || 0;
     if (val && (val.startsWith('http://') || val.startsWith('https://')) && !val.includes('(Không có video)')) {
       items.push({
         url: val,
-        background: bgVal || 'cat',
-        outroVideo: outroVideoStr,
-        outroTime: outroTimeNum > 0 ? outroTimeNum : 0,
+        background: bgVal || DEFAULT_VIDEO.BACKGROUND_VIDEO,
       });
     }
   }

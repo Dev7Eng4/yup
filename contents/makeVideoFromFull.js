@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, execSync } from 'child_process';
 import { MAKE_VIDEO_MODE } from './constants/index.js';
+import { GPU_INFO } from './utils/hardware.util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -11,10 +12,7 @@ const DOWNLOADS_DIR = path.join(ROOT, 'downloads');
 const OVERLAY_DIR = path.join(ROOT, 'backgrounds', 'overlay');
 const OUTPUT_DIR = path.join(ROOT, 'remade_videos');
 
-// ok -> 0.4 + 0.5
-/** Lớp ảnh (dưới) — giữ như phiên bản cũ */
 const IMAGE_OVERLAY_OPACITY = 0.5;
-/** Lớp video (trên cùng) */
 const VIDEO_OVERLAY_OPACITY = 0.5;
 
 /**
@@ -23,29 +21,6 @@ const VIDEO_OVERLAY_OPACITY = 0.5;
  * Giới hạn thực tế: 1–49 (từ 50 trở lên không hợp lệ cho công thức scale/crop).
  */
 const VIDEO_CROP_PERCENT = 0;
-
-/**
- * Tự động detect NVIDIA NVENC encoder bằng cách test encode thực tế.
- * Kiểm tra cả encoder CÓ trong ffmpeg VÀ driver NVIDIA đủ mới để chạy.
- * Nếu OK → dùng h264_nvenc (nhanh gấp 5-10x).
- * Nếu không → fallback về libx264 veryfast.
- */
-function detectNvenc() {
-  try {
-    // Test encode 1 frame nhỏ để xác nhận driver thực sự hoạt động
-    execSync('ffmpeg -hide_banner -loglevel error -f lavfi -i nullsrc=s=64x64:d=0.04 -c:v h264_nvenc -f null -', {
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    });
-    console.log('✅ Detected NVIDIA NVENC — sử dụng GPU encoder.');
-    return true;
-  } catch {
-    console.log('ℹ️ NVENC không khả dụng (driver cũ hoặc không có GPU) — fallback CPU (libx264 veryfast).');
-    return false;
-  }
-}
-
-const HAS_NVENC = detectNvenc();
 
 /**
  * Lấy resolution (width × height) của video bằng ffprobe.
@@ -96,7 +71,7 @@ function getPreprocessedImageOverlay(imagePath, width, height, opacity) {
   try {
     execSync(
       `ffmpeg -hide_banner -loglevel error -y -i "${imagePath}" -vf "scale=${width}:${height},format=rgba,colorchannelmixer=aa=${opacity}" -frames:v 1 "${cachePath}"`,
-      { encoding: 'utf-8', stdio: 'pipe' },
+      { encoding: 'utf-8', stdio: 'pipe' }
     );
     console.log(`Đã tạo cache: ${path.basename(cachePath)}`);
   } catch (err) {
@@ -131,7 +106,7 @@ function getImageFilesFromDir(dir) {
 
 async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
   return new Promise((resolve, reject) => {
-    const encoderLabel = HAS_NVENC ? 'GPU (h264_nvenc p1)' : 'CPU (libx264 ultrafast)';
+    const encoderLabel = GPU_INFO.encoderLabel;
     console.log(`\nĐang xử lý: ${path.basename(videoPath)}`);
     console.log(`Encoder: ${encoderLabel}`);
     console.log(`Ảnh phủ (dưới, opacity ${IMAGE_OVERLAY_OPACITY}): ${path.basename(imagePath)}`);
@@ -145,15 +120,10 @@ async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
 
     const p = Math.min(49, Math.max(0, Math.floor(Number(VIDEO_CROP_PERCENT)) || 0));
     const inner = 100 - 2 * p;
-    const headCrop =
-      p > 0 && inner > 0
-        ? `[0:v]scale=iw*100/${inner}:ih*100/${inner},crop=iw*${inner}/100:ih*${inner}/100[v0];`
-        : '';
+    const headCrop = p > 0 && inner > 0 ? `[0:v]scale=iw*100/${inner}:ih*100/${inner},crop=iw*${inner}/100:ih*${inner}/100[v0];` : '';
     const vid0 = p > 0 && inner > 0 ? '[v0]' : '[0:v]';
     if (p > 0) {
-      console.log(
-        `Video gốc: zoom + crop ${p}% mỗi phía (4 phía), đầu ra ${width}x${height}.`,
-      );
+      console.log(`Video gốc: zoom + crop ${p}% mỗi phía (4 phía), đầu ra ${width}x${height}.`);
     }
 
     // [A] Ảnh đã baked alpha → chỉ overlay thuần, không scale/format/colorchannelmixer mỗi frame
@@ -187,15 +157,10 @@ async function remakeVideo(videoPath, imagePath, overlayVideoPath, outputPath) {
       '[outv]',
       '-map',
       '0:a?',
-      '-shortest',
+      '-shortest'
     );
 
-    // [F] Encoder: preset nhanh nhất — p1 (NVENC) / ultrafast (libx264)
-    if (HAS_NVENC) {
-      args.push('-c:v', 'h264_nvenc', '-preset', 'p1', '-rc', 'vbr', '-cq', '28', '-pix_fmt', 'yuv420p', '-tag:v', 'avc1');
-    } else {
-      args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '28', '-preset', 'ultrafast', '-tag:v', 'avc1');
-    }
+    args.push(...GPU_INFO.videoEncodeArgs);
 
     args.push('-c:a', 'copy', '-movflags', '+faststart', '-f', 'mp4', outputPath);
 
